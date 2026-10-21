@@ -1,0 +1,9 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+  config:
+    # Cấu hình chung và datasource nằm ở config-server (config-repo/application.yml, auth-service.yml)
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"

@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521:orcl}
+    username: ${DB_USERNAME:BANK_AUTH}
+    password: ${DB_PASSWORD:ChangeMe_Auth1}
+    hikari:
+      maximum-pool-size: 10
+
+bank:
+  auth:
+    max-failed-attempts: 5
+    lock-duration: 15m
+    # Tạo tài khoản ADMIN đầu tiên khi chưa có ADMIN nào. Đổi mật khẩu ngay sau lần đăng nhập đầu.
+    bootstrap-admin:
+      username: ${BOOTSTRAP_ADMIN_USERNAME:admin}
+      password: ${BOOTSTRAP_ADMIN_PASSWORD:Admin@123456}
+      email: ${BOOTSTRAP_ADMIN_EMAIL:admin@bank.local}

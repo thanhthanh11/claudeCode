@@ -1,0 +1,14 @@
+# Cấu hình cho integration test (*IT) — thay toàn bộ application.yml (không gọi config-server/Eureka).
+# DataSource do Testcontainers (@ServiceConnection) cung cấp; schema tạo bằng script trong database/oracle.
+spring:
+  application:
+    name: auth-service
+  cloud:
+    config:
+      enabled: false
+      import-check:
+        enabled: false
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate

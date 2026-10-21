@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(mvn:*)",
+      "Bash(docker compose ps)",
+      "Bash(docker compose logs:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Bash(git push:*)",
+      "Bash(docker compose down -v)"
+    ]
+  },
+  "env": {
+    "NLS_LANG": "AMERICAN_AMERICA.AL32UTF8",
+    "MSYS_NO_PATHCONV": "1"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-sensitive-files.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

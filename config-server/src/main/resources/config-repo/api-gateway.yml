@@ -1,0 +1,26 @@
+bank:
+  gateway:
+    rate-limit:
+      # Số request/giây và burst cho mỗi user (hoặc IP nếu chưa đăng nhập)
+      replenish-rate: 20
+      burst-capacity: 40
+
+# Swagger UI gộp tài liệu các service: http://localhost:8080/swagger-ui.html
+springdoc:
+  swagger-ui:
+    urls:
+      - name: auth-service
+        url: /api-docs/auth-service
+      - name: customer-service
+        url: /api-docs/customer-service
+      - name: account-service
+        url: /api-docs/account-service
+      - name: transaction-service
+        url: /api-docs/transaction-service
+      - name: notification-service
+        url: /api-docs/notification-service
+
+spring:
+  reactor:
+    # Giữ trace context qua các toán tử Reactor (WebFlux)
+    context-propagation: auto

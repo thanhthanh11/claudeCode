@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521:orcl}
+    username: ${DB_USERNAME:BANK_ACCOUNT}
+    password: ${DB_PASSWORD:ChangeMe_Account1}
+    hikari:
+      maximum-pool-size: 15
+
+bank:
+  fee:
+    # Tài khoản nội bộ nhận phí theo loại tiền (seed trong 08_ và 12_). Nhiều tài khoản / loại tiền để chia tải
+    # khóa dòng: giao dịch chọn một tài khoản theo hash transactionRef. Thêm/bớt tài khoản trong danh sách
+    # là an toàn: hoàn phí tìm đúng tài khoản đã thu phí qua sổ cái, không tính lại hash.
+    accounts:
+      VND: "990000000001,990000000004,990000000005,990000000006"
+      USD: "990000000002"
+      EUR: "990000000003"
+  hold:
+    expiry-check-interval: 60s
+  reconciliation:
+    # Đối soát sổ cái hằng ngày lúc 01:30
+    cron: "0 30 1 * * *"

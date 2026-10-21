@@ -1,0 +1,125 @@
+# =============================================================
+# Cấu hình dùng chung cho mọi service (client của config-server).
+# Giá trị bí mật lấy từ biến môi trường; giá trị mặc định chỉ dành cho môi trường dev local.
+# =============================================================
+spring:
+  threads:
+    virtual:
+      enabled: true
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  data:
+    web:
+      pageable:
+        max-page-size: 100
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 10s
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 32
+          max-idle: 16
+          min-idle: 2
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 5000
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+      # Truyền trace (traceparent) qua header Kafka
+      observation-enabled: true
+    template:
+      observation-enabled: true
+  cache:
+    type: hazelcast
+  http:
+    client:
+      # Timeout cho RestClient gọi service khác (vd. account-service → customer-service)
+      connect-timeout: 2s
+      read-timeout: 5s
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+bank:
+  security:
+    encryption:
+      # Khóa AES gốc: Base64, đúng 256 bit. Từ đây dẫn xuất (HKDF) khóa JWE, cột PII trong DB, Kafka, Redis
+      # request-reply và blind index. BẮT BUỘC đặt AES_ENCRYPTION_KEY riêng ngoài môi trường dev;
+      # đổi khóa phải mã hóa lại dữ liệu đã lưu. Sinh khóa: openssl rand -base64 32
+      key: ${AES_ENCRYPTION_KEY:YmFuay1zeXN0ZW0tZGV2LW9ubHktYWVzLWtleS0zMmI=}
+    jwt:
+      # Access/service token là JWE (A256GCM) — khóa lấy từ bank.security.encryption.key
+      issuer: bank-auth-service
+      access-token-ttl: 15m
+      refresh-token-ttl: 7d
+      service-token-ttl: 1m
+  redis:
+    request-reply:
+      key-prefix: bank:rr
+      workers: 4
+      default-timeout: 5s
+      reply-ttl: 30s
+  hazelcast:
+    # Danh sách member khi chạy nhiều instance, vd "10.0.0.1:5701,10.0.0.2:5701"
+    members: ${HAZELCAST_MEMBERS:}
+  resilience:
+    circuit-breaker:
+      # Mở mạch khi >= 50% trong 20 lời gọi gần nhất (tối thiểu 10) lỗi/timeout; thử lại sau 30 giây
+      sliding-window-size: 20
+      minimum-number-of-calls: 10
+      failure-rate-threshold: 50
+      wait-duration-in-open-state: 30s
+  openapi:
+    server-url: ${OPENAPI_SERVER_URL:http://localhost:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  tracing:
+    sampling:
+      # Dev: lấy mẫu 100%. Production nên giảm (vd. 0.1)
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
+
+logging:
+  level:
+    com.bank: INFO
+  # Console giữ dạng text; file ghi JSON (logstash format, có traceId/spanId từ MDC)
+  # để Grafana Alloy đọc và đẩy vào Loki (xem observability/). Đường dẫn tương đối theo thư mục chạy.
+  file:
+    name: ${LOG_DIR:logs}/json/${spring.application.name}.json
+  structured:
+    format:
+      file: logstash
+  logback:
+    rollingpolicy:
+      max-file-size: 50MB
+      max-history: 3

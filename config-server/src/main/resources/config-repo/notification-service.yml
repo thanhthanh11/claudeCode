@@ -1,0 +1,38 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521:orcl}
+    username: ${DB_USERNAME:BANK_NOTIFICATION}
+    password: ${DB_PASSWORD:ChangeMe_Notification1}
+    hikari:
+      maximum-pool-size: 10
+  # SMTP khi bank.notification.email.provider=smtp. Mặc định trỏ Mailpit trong docker-compose (UI http://localhost:8025)
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:false}
+      mail.smtp.starttls.enable: ${MAIL_SMTP_STARTTLS:false}
+      mail.smtp.starttls.required: ${MAIL_SMTP_STARTTLS:false}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
+bank:
+  notification:
+    max-retries: 3
+    retry-interval: 60s
+    email:
+      # smtp | log (log = giả lập, chỉ dùng cho dev)
+      provider: ${EMAIL_PROVIDER:smtp}
+      from: ${MAIL_FROM:no-reply@bank.local}
+      from-name: ${MAIL_FROM_NAME:Ngân hàng}
+    sms:
+      # http | log (log = giả lập, chỉ dùng cho dev)
+      provider: ${SMS_PROVIDER:log}
+      url: ${SMS_GATEWAY_URL:}
+      api-key: ${SMS_GATEWAY_API_KEY:}
+      sender: ${SMS_SENDER:BANK}
+      strip-diacritics: true

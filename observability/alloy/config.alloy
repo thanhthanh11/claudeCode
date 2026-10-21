@@ -1,0 +1,86 @@
+// Grafana Alloy: đọc file log JSON (logstash format) của các service rồi đẩy vào Loki.
+// Thư mục dự án được mount vào /bank (read-only):
+//   - chạy từ thư mục gốc (java -jar ...)      → /bank/logs/json/<service>.json
+//   - chạy bằng mvn -pl <module> spring-boot:run → /bank/<module>/logs/json/<service>.json
+
+local.file_match "bank" {
+  path_targets = [
+    {"__path__" = "/bank/logs/json/*.json"},
+    {"__path__" = "/bank/*/logs/json/*.json"},
+  ]
+  sync_period = "5s"
+}
+
+loki.source.file "bank" {
+  targets       = local.file_match.bank.targets
+  forward_to    = [loki.process.bank.receiver]
+  // Đọc từ đầu file mới (không mất log lúc khởi động); vị trí đã đọc lưu trong storage.path
+  tail_from_end = false
+
+  // Bind mount trên Docker Desktop (Windows) không phát sự kiện inotify → dùng polling
+  file_watch {
+    min_poll_frequency = "250ms"
+    max_poll_frequency = "1s"
+  }
+}
+
+loki.process "bank" {
+  stage.json {
+    expressions = {
+      ts      = "\"@timestamp\"",
+      level   = "level",
+      logger  = "logger_name",
+      thread  = "thread_name",
+      traceId = "traceId",
+      spanId  = "spanId",
+    }
+  }
+
+  // Tên service lấy từ tên file: .../<service>.json
+  stage.regex {
+    source     = "filename"
+    expression = "(?P<service_name>[^/]+)\\.json$"
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339"
+  }
+
+  stage.static_labels {
+    values = {
+      job = "bank",
+      env = "local",
+    }
+  }
+
+  // Label ít giá trị → dùng để lọc nhanh
+  stage.labels {
+    values = {
+      service_name = "",
+      level        = "",
+    }
+  }
+
+  // Giá trị nhiều (traceId...) → structured metadata, lọc bằng: | traceId="..."
+  stage.structured_metadata {
+    values = {
+      traceId = "",
+      spanId  = "",
+      logger  = "",
+      thread  = "",
+    }
+  }
+
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

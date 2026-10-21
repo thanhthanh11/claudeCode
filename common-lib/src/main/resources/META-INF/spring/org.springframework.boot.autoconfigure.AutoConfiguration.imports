@@ -1,0 +1,8 @@
+com.bank.common.config.CommonCryptoConfig
+com.bank.common.config.CommonJacksonConfig
+com.bank.common.config.CommonJwtConfig
+com.bank.common.config.CommonSecurityConfig
+com.bank.common.config.CommonResilienceConfig
+com.bank.common.config.RedisRequestReplyConfig
+com.bank.common.config.CommonKafkaConfig
+com.bank.common.config.CommonOpenApiConfig

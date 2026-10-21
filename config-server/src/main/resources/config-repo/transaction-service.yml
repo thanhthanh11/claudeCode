@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521:orcl}
+    username: ${DB_USERNAME:BANK_TRANSACTION}
+    password: ${DB_PASSWORD:ChangeMe_Transaction1}
+    hikari:
+      maximum-pool-size: 15
+
+bank:
+  outbox:
+    poll-interval: 500ms
+    batch-size: 100
+    max-retries: 10
+  saga:
+    poll-interval: 30s
+    step-timeout: 2m
+    max-retries: 3
+    batch-size: 50
+  otp:
+    enabled: true
+    ttl: 3m
+    max-attempts: 5
+    max-resends: 3
+    pending-timeout: 10m
+    # Khóa HMAC-SHA256 ký OTP lưu trong Redis (Base64, tối thiểu 256 bit, khác AES_ENCRYPTION_KEY).
+    # BẮT BUỘC đặt OTP_HMAC_SECRET riêng ngoài môi trường dev.
+    hmac-secret: ${OTP_HMAC_SECRET:YmFuay1zeXN0ZW0tZGV2LW9ubHktb3RwLWhtYWMtc2VjcmV0LWNoYW5nZS1tZS0wMDAw}
+    # Khách hàng tự chuyển khoản từ ngưỡng này trở lên phải xác nhận OTP
+    thresholds:
+      VND: 10000000
+      USD: 500
+      EUR: 500
+  reconciliation:
+    # Đối soát giao dịch ngày hôm trước với sổ cái lúc 02:00
+    cron: "0 0 2 * * *"
+  scheduled-transfer:
+    cron: "0 */5 * * * *"

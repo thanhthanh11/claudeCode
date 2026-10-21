@@ -1,0 +1,19 @@
+# Cấu hình cho integration test (*IT) — thay toàn bộ application.yml (không gọi config-server/Eureka/Kafka).
+spring:
+  application:
+    name: transaction-service
+  cloud:
+    config:
+      enabled: false
+      import-check:
+        enabled: false
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+bank:
+  security:
+    encryption:
+      # Khóa AES chỉ dùng cho test (OUTBOX_EVENTS.PAYLOAD mã hóa qua EncryptedStringConverter)
+      key: dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=
