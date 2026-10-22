@@ -13,15 +13,18 @@ Hệ thống hỗ trợ các nghiệp vụ ngân hàng bán lẻ cơ bản:
 - Quản lý hồ sơ khách hàng và xác thực danh tính (KYC).
 - Mở và quản lý tài khoản thanh toán / tiết kiệm, ghi sổ cái.
 - Chuyển khoản giữa hai tài khoản, nộp tiền và rút tiền tại quầy.
+- Chuyển tiền qua số điện thoại (alias số điện thoại → tài khoản nhận, mục 10.11).
+- Chuyển tiền liên ngân hàng qua Napas 247: chuyển đi và nhận tiền đến (mục 10.12).
 - Gửi thông báo kết quả giao dịch qua SMS / email.
 
 | Service | Nghiệp vụ phụ trách | Schema Oracle |
 |---|---|---|
 | `auth-service` | Người dùng, đăng nhập, token, role/permission | `BANK_AUTH` |
 | `customer-service` | Hồ sơ khách hàng, giấy tờ KYC | `BANK_CUSTOMER` |
-| `account-service` | Tài khoản, số dư, sổ cái; thực hiện trừ/cộng/hoàn tiền | `BANK_ACCOUNT` |
+| `account-service` | Tài khoản, số dư, sổ cái; thực hiện trừ/cộng/hoàn tiền; alias số điện thoại | `BANK_ACCOUNT` |
 | `transaction-service` | Tiếp nhận giao dịch, điều phối Saga, chống trùng | `BANK_TRANSACTION` |
 | `notification-service` | Gửi thông báo theo mẫu, gửi lại khi lỗi | `BANK_NOTIFICATION` |
+| `interbank-service` | Kết nối Napas: tra tên người nhận, gửi lệnh chuyển đi, tra soát, nhận tiền đến | `BANK_INTERBANK` |
 | `api-gateway` | Điểm vào duy nhất, kiểm tra token, giới hạn tần suất | — |
 
 ---
@@ -227,6 +230,9 @@ mã giao dịch, loại bút toán `DEBIT`/`CREDIT`, số tiền (> 0), số dư
 | `TRANSFER` — chuyển khoản | `POST /api/transactions/transfer` | `TRANSFER_CREATE` (khách hàng, nhân viên) | Hai tài khoản khác nhau; khách hàng phải là chủ tài khoản nguồn; cả hai `ACTIVE`; cùng loại tiền; số dư khả dụng đủ. Nhân viên chuyển (không OTP) → ghi audit `STAFF_TRANSFER_CREATED` |
 | `DEPOSIT` — nộp tiền mặt | `POST /api/transactions/deposit` | `TRANSFER_CREATE` + `TELLER`/`ADMIN` | Tài khoản nhận `ACTIVE` |
 | `WITHDRAWAL` — rút tiền mặt | `POST /api/transactions/withdrawal` | `TRANSFER_CREATE` + `TELLER`/`ADMIN` | Tài khoản nguồn `ACTIVE`; số dư khả dụng đủ |
+| `TRANSFER` qua số điện thoại | `POST /api/transactions/transfer-by-phone` | `TRANSFER_CREATE` | Số điện thoại đã đăng ký alias (mục 10.11), sau đó như `TRANSFER` |
+| `INTERBANK_OUT` — chuyển đi ngân hàng khác | `POST /api/transactions/interbank-transfer` | `TRANSFER_CREATE` | Như `TRANSFER` với tài khoản nguồn; chỉ VND; ngân hàng nhận hỗ trợ Napas; tra được tên người nhận (mục 10.12) |
+| `INTERBANK_IN` — tiền đến từ ngân hàng khác | Webhook Napas `POST /api/interbank/inbound` | Napas (chữ ký HMAC) | Tài khoản nhận tồn tại, `ACTIVE`, VND; không phí, không hạn mức |
 
 - Số tiền > 0, tối đa 15 chữ số phần nguyên và 4 chữ số thập phân. Diễn giải tối đa 255 ký tự.
 - Loại tiền của giao dịch lấy theo tài khoản.
@@ -274,6 +280,22 @@ stateDiagram-v2
 
 - `WITHDRAWAL`: `DEBIT_REQUESTED` → `COMPLETED` (trừ được tiền) hoặc `FAILED`.
 - `DEPOSIT`: `CREDIT_REQUESTED` → `COMPLETED` (cộng được tiền) hoặc `FAILED`.
+- `INTERBANK_IN`: như `DEPOSIT`; cộng được → báo Napas `SETTLED`, không cộng được → `FAILED` và báo Napas `RETURNED` (trả tiền về ngân hàng gửi).
+- `INTERBANK_OUT`:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> DEBIT_REQUESTED
+    DEBIT_REQUESTED --> INTERBANK_REQUESTED: ACCOUNT_DEBITED
+    DEBIT_REQUESTED --> FAILED: ACCOUNT_DEBIT_FAILED
+    INTERBANK_REQUESTED --> COMPLETED: INTERBANK_TRANSFER_COMPLETED
+    INTERBANK_REQUESTED --> COMPENSATION_REQUESTED: INTERBANK_TRANSFER_REJECTED
+    INTERBANK_REQUESTED --> MANUAL_REVIEW: quá hạn, chưa rõ kết quả
+    COMPENSATION_REQUESTED --> COMPENSATED: ACCOUNT_REFUNDED
+```
+
+  Napas không phản hồi **không** được coi là thất bại: tiền có thể đã sang ngân hàng kia, nên hệ thống tra soát chứ không tự hoàn tiền.
 - Event chỉ được áp dụng khi giao dịch đang ở đúng bước chờ event đó. Event lặp lại hoặc đến muộn bị bỏ qua.
 - Trường hợp đặc biệt: nhận `ACCOUNT_DEBITED` khi giao dịch đã `FAILED` (lệnh trừ tiền bị xử lý lại) → hệ thống tự gửi lệnh hoàn tiền để khách không mất tiền.
 - Hoàn tiền thất bại (ví dụ tài khoản nguồn đã đóng): ghi lý do vào giao dịch, log mức ERROR; job quá hạn gửi lại lệnh hoàn tiền rồi chuyển `MANUAL_REVIEW`.
@@ -590,6 +612,94 @@ sequenceDiagram
     KH->>TS: Tra cứu kết quả, lịch sử giao dịch
 ```
 
+### 8.11 Chuyển tiền qua số điện thoại
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor B as Người nhận
+    actor A as Người chuyển
+    participant AS as account-service
+    participant CS as customer-service
+    participant TS as transaction-service
+    B->>AS: PUT /api/accounts/{no}/phone-alias
+    AS->>CS: customer.get-by-user-id (SĐT trong hồ sơ, KYC)
+    AS->>AS: Lưu PHONE_ALIASES (PHONE_HASH → tài khoản)
+    A->>AS: GET /api/accounts/phone-alias/lookup?phone=
+    AS-->>A: Tên đã che + số TK đã che
+    A->>TS: POST /api/transactions/transfer-by-phone + Idempotency-Key
+    TS->>AS: account.resolve-phone-alias (Redis)
+    AS->>CS: customer.get-by-id (service token) — so lại SĐT hiện tại
+    AS-->>TS: Số tài khoản nhận
+    TS->>TS: Xử lý như chuyển khoản nội bộ (phí, hạn mức, OTP, Saga 8.5)
+    TS-->>A: 202 PROCESSING
+```
+
+### 8.12 Chuyển tiền liên ngân hàng — chiều đi
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Khách hàng
+    participant TS as transaction-service
+    participant IS as interbank-service
+    participant AS as account-service
+    participant K as Kafka
+    participant N as Napas
+    C->>IS: GET /api/interbank/name-inquiry?bankCode&accountNumber
+    IS->>N: Tra tên
+    IS-->>C: Tên người nhận
+    C->>TS: POST /api/transactions/interbank-transfer + Idempotency-Key
+    TS->>IS: interbank.name-inquiry (Redis) — tra lại, lưu tên
+    TS-->>C: 202 PROCESSING (hoặc PENDING chờ OTP)
+    TS->>K: ACCOUNT_DEBIT_REQUESTED (amount + phí)
+    K->>AS: Trừ tiền
+    AS->>K: ACCOUNT_DEBITED
+    K->>TS: step = INTERBANK_REQUESTED
+    TS->>K: bank.interbank.commands: INTERBANK_TRANSFER_REQUESTED
+    K->>IS: Lưu OUTBOUND_TRANSFERS (NEW)
+    IS->>N: Gửi lệnh (job 2s)
+    alt Napas chấp nhận
+        IS->>K: bank.interbank.events: INTERBANK_TRANSFER_COMPLETED
+        K->>TS: COMPLETED + thông báo
+    else Napas từ chối
+        IS->>K: INTERBANK_TRANSFER_REJECTED
+        K->>TS: COMPENSATION_REQUESTED → hoàn tiền + phí → COMPENSATED
+    else Không phản hồi
+        IS->>N: Tra soát định kỳ (giãn cách tăng dần) tới khi có kết quả
+        Note over TS: Quá hạn → MANUAL_REVIEW, KHÔNG tự hoàn tiền
+    end
+```
+
+### 8.13 Chuyển tiền liên ngân hàng — tiền đến
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant N as Napas
+    participant IS as interbank-service
+    participant AS as account-service
+    participant K as Kafka
+    participant TS as transaction-service
+    N->>IS: POST /api/interbank/inbound (X-Napas-Timestamp, X-Napas-Signature)
+    IS->>IS: Xác thực HMAC, chống trùng napasRef
+    IS->>AS: account.get-by-number (service token) — kiểm tra sớm
+    alt Tài khoản không hợp lệ
+        IS-->>N: 202 RETURNED (+ callback RETURNED)
+    else Hợp lệ
+        IS-->>N: 202 RECEIVED
+        IS->>K: bank.interbank.events: INTERBANK_INBOUND_RECEIVED
+        K->>TS: Tạo giao dịch INTERBANK_IN (key 0:ibin-<napasRef>)
+        TS->>K: ACCOUNT_CREDIT_REQUESTED
+        K->>AS: Cộng tiền
+        AS->>K: ACCOUNT_CREDITED / ACCOUNT_CREDIT_FAILED
+        K->>TS: COMPLETED / FAILED
+        TS->>K: bank.interbank.commands: INTERBANK_INBOUND_SETTLED / RETURNED
+        K->>IS: Cập nhật INBOUND_TRANSFERS
+        IS->>N: Callback kết quả (job 5s, gửi lại khi lỗi)
+    end
+```
+
 ---
 
 ## 9. Mã lỗi nghiệp vụ thường gặp
@@ -619,6 +729,17 @@ Response lỗi bọc trong `ApiResponse` và có mã lỗi (`code`).
 | 403 | `FORBIDDEN` | Không có quyền / không phải chủ sở hữu dữ liệu |
 | 404 | `ACCOUNT_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `USER_NOT_FOUND`, `KYC_DOCUMENT_NOT_FOUND`, `TEMPLATE_NOT_FOUND` | Không tìm thấy dữ liệu |
 | 504 | `SERVICE_TIMEOUT` | Service đích không trả lời kênh Redis trong 5 giây |
+| 404 | `PHONE_ALIAS_NOT_FOUND` | Số điện thoại chưa đăng ký nhận tiền (hoặc chủ đã đổi số / bị khóa) |
+| 400 | `PHONE_ALIAS_ACCOUNT_INVALID` | Đăng ký alias cho tài khoản không phải PAYMENT `ACTIVE`, hoặc tài khoản nhận của alias không hoạt động |
+| 409 | `PHONE_ALIAS_TAKEN` | Số điện thoại đang là alias của khách hàng khác |
+| 400 | `INVALID_PHONE` | Số điện thoại sai định dạng |
+| 400 | `INTERBANK_BANK_NOT_SUPPORTED` | Ngân hàng không có trong danh mục Napas / ngừng hỗ trợ |
+| 400 | `INTERBANK_SAME_BANK` | Chuyển liên ngân hàng tới chính ngân hàng mình |
+| 400 | `INTERBANK_CURRENCY_NOT_SUPPORTED` | Chuyển liên ngân hàng từ tài khoản khác VND |
+| 404 | `BENEFICIARY_NOT_FOUND` | Napas không tìm thấy tài khoản người nhận |
+| 502 | `NAPAS_UNAVAILABLE` | Không kết nối được Napas khi tra tên |
+| 401 | `INVALID_SIGNATURE` | Webhook tiền đến sai chữ ký / quá hạn timestamp |
+| 409 | `NAPAS_REF_CONFLICT` | Napas gửi lại cùng mã tham chiếu nhưng khác nội dung |
 
 Lỗi xảy ra trong lúc Saga chạy (không đủ số dư thực tế, tài khoản bị phong tỏa giữa chừng…) không trả về API tạo giao dịch.
 Lỗi đó nằm trong `failureReason` của giao dịch, có `status = FAILED`.
@@ -689,13 +810,47 @@ Lỗi đó nằm trong `failureReason` của giao dịch, có `status = FAILED`.
 - **Chưa hỗ trợ chuyển khác loại tiền** (không quy đổi ngoại tệ).
 - **Khách hàng không tự mở tài khoản được**, vì chỉ nhân viên có `ACCOUNT_CREATE`.
 - Thông báo gửi lỗi đủ 3 lần chỉ được ghi nhận, chưa có màn hình xử lý; OTP gửi lỗi thì khách hàng yêu cầu gửi lại.
+- **Liên ngân hàng chưa có quyết toán bù trừ với Napas** (tài khoản thanh toán bù trừ, đối soát file cuối ngày): sổ cái ghi
+  chuyển đi như rút tiền ra khỏi hệ thống, tiền đến như nộp tiền vào. Chỉ hỗ trợ VND. Chiều đến chỉ nhận theo số tài khoản
+  (chưa nhận theo alias số điện thoại từ ngân hàng khác).
+
+### 10.11 Chuyển tiền qua số điện thoại
+- **Đăng ký** `PUT /api/accounts/{no}/phone-alias` (khách hàng, chủ tài khoản): khách hàng `ACTIVE`, KYC `VERIFIED`; tài khoản
+  `PAYMENT` `ACTIVE`. Số điện thoại lấy từ **hồ sơ khách hàng** (không nhập tay, tránh đăng ký số của người khác). Một số điện thoại
+  chỉ trỏ tới một tài khoản, mỗi khách hàng một alias; đăng ký lại cho tài khoản khác thì alias chuyển sang tài khoản mới.
+  Hủy: `DELETE /api/accounts/{no}/phone-alias`; xem: `GET /api/accounts/phone-alias`.
+- **Tra người nhận** `GET /api/accounts/phone-alias/lookup?phone=` (`TRANSFER_CREATE`): chỉ trả tên đã che (`NGUYEN V** A*`) và số
+  tài khoản đã che để người chuyển xác nhận.
+- **Chuyển** `POST /api/transactions/transfer-by-phone` `{fromAccountNumber, phone, amount, description}`: phân giải ra tài khoản
+  nhận rồi xử lý **y như chuyển khoản nội bộ** (phí, hạn mức, OTP, Saga). Gửi lại cùng `Idempotency-Key` trả về giao dịch đã tạo.
+- **Alias tự mất hiệu lực** khi nhân viên đổi số điện thoại trong hồ sơ, khách hàng không còn `ACTIVE` hoặc tài khoản bị
+  phong tỏa / đóng. Số điện thoại cũ được khách hàng khác dùng lại thì người đó đăng ký đè được.
+- Không lưu số điện thoại rõ ở account-service — chỉ blind index `PHONE_HASH`.
+
+### 10.12 Chuyển tiền liên ngân hàng (Napas 247)
+- **Danh mục ngân hàng** `GET /api/interbank/banks` (mã BIN Napas). **Tra tên** `GET /api/interbank/name-inquiry?bankCode&accountNumber`
+  (bắt buộc trước khi chuyển; chuyển tới chính ngân hàng mình → `INTERBANK_SAME_BANK`).
+- **Chuyển đi** `POST /api/transactions/interbank-transfer` `{fromAccountNumber, bankCode, beneficiaryAccount, amount, description}`:
+  chỉ VND, số tiền nguyên; phí riêng (mẫu: 0,03%, tối thiểu 3.000, tối đa 30.000); hạn mức riêng (mẫu: 499.999.999/lần,
+  1 tỷ/ngày, 50 lần/ngày; SAVINGS 100 triệu/lần); OTP như chuyển khoản. Giao dịch lưu ngân hàng, số tài khoản và tên người nhận.
+- **Kết quả**: Napas chấp nhận → `COMPLETED`; từ chối → hoàn cả tiền và phí (`COMPENSATED`); **không phản hồi → tra soát**, không
+  hoàn tiền. Quá hạn chờ (Saga 2 phút × 3 lần) → `MANUAL_REVIEW` nhưng kết quả Napas về sau vẫn được áp dụng. Kết quả trái ngược
+  sau khi đã kết thúc (thành công sau khi đã hoàn tiền / từ chối sau khi đã hoàn tất) → `MANUAL_REVIEW` để nhân viên xử lý.
+- **Tiền đến**: Napas gọi webhook có chữ ký HMAC-SHA256 (`X-Napas-Signature` = hex HMAC của `timestamp + "." + body`,
+  `X-Napas-Timestamp` lệch ≤ 5 phút). Trùng `napasRef` → trả trạng thái hiện có, không cộng hai lần. Tài khoản nhận không hợp lệ
+  → trả lại ngay (`RETURNED`); hợp lệ → giao dịch `INTERBANK_IN`, cộng tiền, báo lại Napas `SETTLED` / `RETURNED`.
+  Người nhận nhận thông báo `TRANSFER_RECEIVED`.
+- **Vận hành** (`OPERATION_MANAGE`): `GET /api/admin/interbank/outbound?status=UNKNOWN` — lệnh chưa rõ kết quả;
+  `POST /api/admin/interbank/outbound/{transactionRef}/inquiry` — tra soát ngay (ghi audit `INTERBANK_INQUIRY_TRIGGERED`).
+- Dev dùng Napas giả lập (`NAPAS_PROVIDER=mock`): tài khoản nhận đuôi `000` bị từ chối, đuôi `999` không phản hồi rồi thành công khi
+  tra soát, đuôi `404` tra tên không thấy.
 
 ## 11. Khởi động hệ thống local
 
 ### 11.1 Điều kiện
 
 - JDK 21, Maven, Docker Desktop.
-- Oracle 19c chạy tại `localhost:1521`, SID `orcl`, đã chạy các script `database/oracle/00_`–`05_`.
+- Oracle 19c chạy tại `localhost:1521`, SID `orcl`, đã chạy các script trong `database/oracle/` theo thứ tự số (`18_` bằng `BANK_ADMIN`, `19_` bằng `bank_interbank`).
   Khi chạy sqlplus luôn đặt `NLS_LANG=AMERICAN_AMERICA.AL32UTF8`.
 
 ### 11.2 Thứ tự khởi động
@@ -705,7 +860,7 @@ flowchart LR
     A["1. Oracle + Docker<br/>(Redis 6379, Kafka 9092)"] --> B["2. mvn clean install"]
     B --> C["3. discovery-server :8761"]
     C --> D["4. config-server :8888"]
-    D --> E["5. auth :8081<br/>customer :8082<br/>account :8083<br/>transaction :8084<br/>notification :8085"]
+    D --> E["5. auth :8081<br/>customer :8082<br/>account :8083<br/>transaction :8084<br/>notification :8085<br/>interbank :8086"]
     E --> F["6. api-gateway :8080"]
 ```
 
@@ -715,7 +870,7 @@ flowchart LR
 | 2 | `mvn clean install -DskipTests` | Build `common-lib` và các jar |
 | 3 | `discovery-server` | Các service khác đăng ký vào Eureka |
 | 4 | `config-server` | Service import cấu hình bằng `spring.config.import=configserver:` (không optional), thiếu config-server thì service không khởi động được |
-| 5 | 5 service nghiệp vụ (thứ tự tùy ý) | Gọi nhau qua Eureka / Redis / Kafka lúc chạy, không phụ thuộc thứ tự khởi động |
+| 5 | 6 service nghiệp vụ (thứ tự tùy ý) | Gọi nhau qua Eureka / Redis / Kafka lúc chạy, không phụ thuộc thứ tự khởi động |
 | 6 | `api-gateway` | Định tuyến `lb://` tới các service đã đăng ký |
 
 ### 11.3 Lệnh chạy
@@ -735,6 +890,7 @@ mvn -pl customer-service spring-boot:run
 mvn -pl account-service spring-boot:run
 mvn -pl transaction-service spring-boot:run
 mvn -pl notification-service spring-boot:run
+mvn -pl interbank-service spring-boot:run
 mvn -pl api-gateway spring-boot:run
 
 # Hoặc chạy jar

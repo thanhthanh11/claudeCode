@@ -12,6 +12,7 @@ paths:
 - Mở tài khoản gọi `customer-service` qua `@LoadBalanced RestClient` (`http://customer-service/...`) để kiểm tra KYC; timeout `spring.http.client.*`.
 - `ACCOUNTS.VERSION` cho `@Version`.
 - Sao kê JSON/CSV/PDF (`/api/accounts/{no}/statement[/export]`, OpenPDF + font Liberation).
+- Alias số điện thoại (`PHONE_ALIASES`, `PhoneAliasService`, script 16): chỉ lưu `PHONE_HASH` (blind index, cùng khóa với `CUSTOMERS.PHONE_HASH`), unique theo SĐT và theo tài khoản. Đăng ký lấy SĐT từ hồ sơ (`customer.get-by-user-id`), yêu cầu KYC `VERIFIED` + tài khoản `PAYMENT ACTIVE`. Phân giải **so lại SĐT hiện tại của chủ** (`customer.get-by-id` bằng `sendAsService`) — đổi số / khóa khách là alias mất hiệu lực; mọi trường hợp không dùng được trả `PHONE_ALIAS_NOT_FOUND` để không lộ trạng thái người khác. REST lookup che số tài khoản; Redis action trả số đầy đủ cho transaction-service.
 
 ## Job (`@Scheduled`)
 | Job | Lịch (property, mặc định) |

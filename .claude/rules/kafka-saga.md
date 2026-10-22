@@ -3,6 +3,7 @@ paths:
   - "transaction-service/**/*.java"
   - "account-service/**/*.java"
   - "notification-service/**/*.java"
+  - "interbank-service/**/*.java"
   - "auth-service/**/*.java"
   - "common-lib/**/event/**"
 ---
@@ -16,6 +17,8 @@ paths:
   | `bank.account.commands` | `ACCOUNT_DEBIT/CREDIT/REFUND_REQUESTED` | transaction → account |
   | `bank.transaction.events` | `ACCOUNT_DEBITED`, `ACCOUNT_CREDITED`, `ACCOUNT_REFUNDED`, `*_FAILED` | account → transaction |
   | `bank.notification.events` | `TRANSACTION_COMPLETED` / `TRANSACTION_FAILED` | transaction → notification |
+  | `bank.interbank.commands` | `INTERBANK_TRANSFER_REQUESTED`, `INTERBANK_INBOUND_SETTLED/RETURNED` | transaction → interbank |
+  | `bank.interbank.events` | `INTERBANK_TRANSFER_COMPLETED/REJECTED`, `INTERBANK_INBOUND_RECEIVED` | interbank → transaction |
   | `bank.audit.events` | `AUDIT_RECORDED` | mọi service → auth |
   | `<topic>.DLT` | message lỗi sau retry | → `DeadLetterConsumerService` (transaction) |
 
@@ -24,6 +27,7 @@ paths:
   - account-service: unique `ACCOUNT_ID, TRANSACTION_REF, ENTRY_TYPE`.
   - Saga bỏ qua event không khớp bước hiện tại.
   - notification-service: unique `EVENT_ID, CHANNEL`.
+  - interbank-service: unique `TRANSACTION_REF` (chuyển đi), `NAPAS_REF` (tiền đến); transaction-service tạo `INTERBANK_IN` với key `0:ibin-<napasRef>`.
 - account-service: khóa dòng tài khoản bằng `SELECT ... FOR UPDATE`, ghi sổ cái, commit rồi mới gửi kết quả và ack. Lỗi nghiệp vụ trả event `*_FAILED`, không ném exception.
 - Lỗi kỹ thuật để `DefaultErrorHandler` retry rồi đẩy sang `<topic>.DLT`.
 - Khi Kafka tạm lỗi, `send().get(5s)` có thể timeout nhưng message vẫn được gửi sau đó → outbox ghi FAILED/NEW dù message đã đi; idempotency phía consumer xử lý trùng.

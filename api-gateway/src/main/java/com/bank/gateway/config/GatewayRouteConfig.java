@@ -20,7 +20,8 @@ public class GatewayRouteConfig {
 
     /** Service có tài liệu OpenAPI (springdoc) được gộp vào Swagger UI của gateway. */
     public static final List<String> DOCUMENTED_SERVICES = List.of(
-            "auth-service", "customer-service", "account-service", "transaction-service", "notification-service");
+            "auth-service", "customer-service", "account-service", "transaction-service", "notification-service",
+            "interbank-service");
 
     @Bean
     public RouteLocator bankRoutes(RouteLocatorBuilder builder, RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
@@ -47,7 +48,11 @@ public class GatewayRouteConfig {
                 .route("notification-service", route -> route
                         .path("/api/notifications/**", "/api/notification-templates/**")
                         .filters(filters -> rateLimit(filters, rateLimiter, keyResolver))
-                        .uri("lb://notification-service"));
+                        .uri("lb://notification-service"))
+                .route("interbank-service", route -> route
+                        .path("/api/interbank/**", "/api/admin/interbank/**")
+                        .filters(filters -> rateLimit(filters, rateLimiter, keyResolver))
+                        .uri("lb://interbank-service"));
         for (String service : DOCUMENTED_SERVICES) {
             routes.route(service + "-api-docs", route -> route
                     .path("/api-docs/" + service)

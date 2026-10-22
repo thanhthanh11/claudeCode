@@ -57,6 +57,10 @@ public class CommonKafkaConfig {
                 topic(KafkaTopics.TRANSACTION_EVENTS + KafkaTopics.DLT_SUFFIX),
                 topic(KafkaTopics.NOTIFICATION_EVENTS),
                 topic(KafkaTopics.NOTIFICATION_EVENTS + KafkaTopics.DLT_SUFFIX),
+                topic(KafkaTopics.INTERBANK_COMMANDS),
+                topic(KafkaTopics.INTERBANK_COMMANDS + KafkaTopics.DLT_SUFFIX),
+                topic(KafkaTopics.INTERBANK_EVENTS),
+                topic(KafkaTopics.INTERBANK_EVENTS + KafkaTopics.DLT_SUFFIX),
                 topic(KafkaTopics.AUDIT_EVENTS),
                 topic(KafkaTopics.AUDIT_EVENTS + KafkaTopics.DLT_SUFFIX));
     }

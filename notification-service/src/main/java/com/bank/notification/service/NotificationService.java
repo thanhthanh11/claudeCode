@@ -76,6 +76,8 @@ public class NotificationService {
      *   <li>Chủ tài khoản bị trừ tiền (chuyển khoản, rút tiền) hoặc được nộp tiền: thành công → SMS + email,
      *       thất bại → email. Mẫu riêng theo loại giao dịch (TRANSFER_* / DEPOSIT_* / WITHDRAWAL_*).</li>
      *   <li>Người nhận chuyển khoản thành công: SMS + email theo mẫu TRANSFER_RECEIVED.</li>
+     *   <li>Chuyển đi liên ngân hàng (INTERBANK_OUT) dùng mẫu TRANSFER_*; tiền đến từ ngân hàng khác (INTERBANK_IN)
+     *       chỉ báo người nhận khi thành công (TRANSFER_RECEIVED).</li>
      * </ul>
      */
     public void handleTransactionEvent(EventEnvelope envelope) {
@@ -83,6 +85,16 @@ public class NotificationService {
                 EventSerializer.payload(objectMapper, envelope, TransactionNotificationPayload.class);
         boolean success = EventTypes.TRANSACTION_COMPLETED.equals(envelope.eventType());
         String type = payload.transactionType();
+        if ("INTERBANK_IN".equals(type)) {
+            // Tiền từ ngân hàng khác: chỉ báo người nhận khi đã cộng tiền; không cộng được thì Napas trả tiền về
+            // ngân hàng gửi, khách hàng của mình không liên quan
+            if (success) {
+                notifyAccountOwner(envelope.eventId(), payload.toAccountNumber(),
+                        NotificationTemplateCodeEnum.TRANSFER_RECEIVED, List.of(ChannelEnum.SMS, ChannelEnum.EMAIL),
+                        payload);
+            }
+            return;
+        }
         String primaryAccount = "DEPOSIT".equals(type) ? payload.toAccountNumber() : payload.fromAccountNumber();
         List<ChannelEnum> channels = success ? List.of(ChannelEnum.SMS, ChannelEnum.EMAIL) : List.of(ChannelEnum.EMAIL);
 

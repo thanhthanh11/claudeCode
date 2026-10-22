@@ -14,5 +14,7 @@ paths:
   - `account.get-by-number` → account (số dư chỉ trả cho chủ tài khoản / nhân viên / service).
   - `account.ledger-by-ref` → account (chỉ service / nhân viên, cho đối soát).
   - `notification.send-otp` → notification (chỉ service token).
+  - `account.resolve-phone-alias` → account (SĐT → tài khoản nhận + tên đã che; user đã đăng nhập / service). So lại SĐT hiện tại của chủ qua `customer.get-by-id` bằng service token.
+  - `interbank.name-inquiry` → interbank (tra tên người nhận qua Napas; `TRANSFER_CREATE` / service).
 - Thêm action: hằng trong `RedisActions` + bean `***RedisHandlerService implements RedisRequestHandler` ở service đích (tự kiểm tra quyền) — xem skill `add-redis-action`.
 - Không dùng Hazelcast thay Redis cho request/reply.

@@ -14,7 +14,7 @@ Cấu hình Claude Code cho dự án (chia sẻ qua repo). Hướng dẫn chung 
 | `output-styles/*.md` | Phong cách trả lời | `/output-style` |
 
 ## Nội dung hiện có
-- **Rules**: `java-code-style`, `jpa-entity`, `oracle-migration`, `kafka-saga`, `testing`, `gateway-routing`, `security`, `common-lib`, `transaction-service`, `account-service`, `notification-service`, `redis-request-reply`, `hazelcast-cache`, `observability`. Kiến trúc chi tiết nằm ở đây thay vì `CLAUDE.md` (giữ `CLAUDE.md` < 150 dòng); thêm/đổi rule thì cập nhật bảng "Tài liệu chi tiết" trong `CLAUDE.md` và `AGENTS.md`.
+- **Rules**: `java-code-style`, `jpa-entity`, `oracle-migration`, `kafka-saga`, `testing`, `gateway-routing`, `security`, `common-lib`, `transaction-service`, `account-service`, `notification-service`, `interbank-service`, `redis-request-reply`, `hazelcast-cache`, `observability`. Kiến trúc chi tiết nằm ở đây thay vì `CLAUDE.md` (giữ `CLAUDE.md` < 150 dòng); thêm/đổi rule thì cập nhật bảng "Tài liệu chi tiết" trong `CLAUDE.md` và `AGENTS.md`.
 - **Skills**: `add-oracle-migration`, `add-redis-action`, `add-kafka-event`, `build-and-test`.
 - **Agents**: `code-reviewer`, `security-auditor`, `db-migration-reviewer` (chỉ đọc).
 - **Commands**: `run-local`.

@@ -28,6 +28,7 @@
         <module>account-service</module>
         <module>transaction-service</module>
         <module>notification-service</module>
+        <module>interbank-service</module>
         <!-- Integration test Saga liên service (chỉ chạy với -Pintegration-test) -->
         <module>saga-it</module>
     </modules>

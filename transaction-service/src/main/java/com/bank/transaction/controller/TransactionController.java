@@ -3,6 +3,8 @@ package com.bank.transaction.controller;
 import com.bank.common.dto.ApiResponse;
 import com.bank.common.dto.PageResponse;
 import com.bank.transaction.dto.CashTransactionRequest;
+import com.bank.transaction.dto.InterbankTransferRequest;
+import com.bank.transaction.dto.PhoneTransferRequest;
 import com.bank.transaction.dto.ConfirmTransactionRequest;
 import com.bank.transaction.dto.TransactionResponse;
 import com.bank.transaction.dto.TransferRequest;
@@ -44,6 +46,25 @@ public class TransactionController {
     public ApiResponse<TransactionResponse> transfer(@RequestHeader(IDEMPOTENCY_HEADER) String idempotencyKey,
                                                      @Valid @RequestBody TransferRequest request) {
         return ApiResponse.ok("Đã tiếp nhận lệnh chuyển tiền", transactionService.transfer(request, idempotencyKey));
+    }
+
+    /** Chuyển tiền tới số điện thoại đã đăng ký nhận tiền; xử lý như chuyển khoản nội bộ (phí, hạn mức, OTP). */
+    @PostMapping("/transfer-by-phone")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @PreAuthorize("hasAuthority('TRANSFER_CREATE')")
+    public ApiResponse<TransactionResponse> transferByPhone(@RequestHeader(IDEMPOTENCY_HEADER) String idempotencyKey,
+                                                            @Valid @RequestBody PhoneTransferRequest request) {
+        return ApiResponse.ok("Đã tiếp nhận lệnh chuyển tiền", transactionService.transferByPhone(request, idempotencyKey));
+    }
+
+    /** Chuyển tiền ra ngân hàng khác qua Napas 247; kết quả cuối tra bằng GET /{transactionRef}. */
+    @PostMapping("/interbank-transfer")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @PreAuthorize("hasAuthority('TRANSFER_CREATE')")
+    public ApiResponse<TransactionResponse> interbankTransfer(@RequestHeader(IDEMPOTENCY_HEADER) String idempotencyKey,
+                                                              @Valid @RequestBody InterbankTransferRequest request) {
+        return ApiResponse.ok("Đã tiếp nhận lệnh chuyển tiền liên ngân hàng",
+                transactionService.interbankTransfer(request, idempotencyKey));
     }
 
     @PostMapping("/deposit")

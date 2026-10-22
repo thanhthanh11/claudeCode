@@ -223,9 +223,10 @@ class TransferSagaIT {
         }
         runAs("BANK_CUSTOMER", "ChangeMe_Customer1", "02_customer_schema.sql", "13_customer_pii_encryption.sql");
         runAs("BANK_ACCOUNT", "ChangeMe_Account1", "03_account_schema.sql", "08_account_holds_reconciliation_fee.sql",
-                "12_account_fee_account_shards.sql");
+                "12_account_fee_account_shards.sql", "16_account_phone_aliases.sql");
         runAs("BANK_TRANSACTION", "ChangeMe_Transaction1", "04_transaction_schema.sql",
-                "06_transaction_saga_timeout.sql", "09_transaction_ops_limits_fees.sql", "11_transaction_outbox_trace.sql");
+                "06_transaction_saga_timeout.sql", "09_transaction_ops_limits_fees.sql", "11_transaction_outbox_trace.sql",
+                "17_transaction_interbank.sql");
         accountDb = new JdbcTemplate(new DriverManagerDataSource(ORACLE.getJdbcUrl(), "BANK_ACCOUNT", "ChangeMe_Account1"));
         transactionDb = new JdbcTemplate(new DriverManagerDataSource(ORACLE.getJdbcUrl(), "BANK_TRANSACTION",
                 "ChangeMe_Transaction1"));

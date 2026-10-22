@@ -17,9 +17,10 @@ Hệ thống ngân hàng microservice: **Java 21**, **Spring Boot 3.5.7**, **Spr
 | `api-gateway` | 8080 | Spring Cloud Gateway (WebFlux): điểm vào duy nhất, verify JWT, định tuyến `lb://`, rate limit Redis |
 | `auth-service` | 8081 | Đăng nhập, phát hành/làm mới JWT, user/role/permission (RBAC), audit log |
 | `customer-service` | 8082 | Hồ sơ khách hàng, KYC |
-| `account-service` | 8083 | Tài khoản, số dư, sổ cái, tạm giữ tiền, sao kê; xử lý lệnh trừ/cộng/hoàn từ Kafka |
-| `transaction-service` | 8084 | Chuyển / nộp / rút, Saga, Outbox, idempotency, phí, hạn mức, OTP, back-office |
+| `account-service` | 8083 | Tài khoản, số dư, sổ cái, tạm giữ tiền, sao kê, alias số điện thoại; xử lý lệnh trừ/cộng/hoàn từ Kafka |
+| `transaction-service` | 8084 | Chuyển (nội bộ, qua SĐT, liên ngân hàng) / nộp / rút, Saga, Outbox, idempotency, phí, hạn mức, OTP, back-office |
 | `notification-service` | 8085 | Gửi thông báo email (SMTP) / SMS (HTTP gateway) từ Kafka, gửi OTP |
+| `interbank-service` | 8086 | Kết nối Napas 247: tra tên người nhận, chuyển đi, tra soát, nhận tiền đến (webhook HMAC) |
 | `discovery-server` | 8761 | Eureka |
 | `config-server` | 8888 | Spring Cloud Config (profile `native`) |
 | `saga-it` | — | Chỉ có test: Saga chuyển tiền liên service bằng Testcontainers |
@@ -35,6 +36,7 @@ Hệ thống ngân hàng microservice: **Java 21**, **Spring Boot 3.5.7**, **Spr
 | `.claude/rules/transaction-service.md` | Saga, phí, hạn mức, OTP, back-office, chuyển định kỳ, job |
 | `.claude/rules/account-service.md` | Khóa dòng số dư, sổ cái, tạm giữ, job đối soát |
 | `.claude/rules/notification-service.md` | Email/SMS provider, phân loại lỗi retry |
+| `.claude/rules/interbank-service.md` | Napas (mock/http), chuyển đi / tra soát / tiền đến, webhook HMAC, job |
 | `.claude/rules/redis-request-reply.md` | Kênh Redis, danh sách action |
 | `.claude/rules/hazelcast-cache.md` | Cache, danh sách cache, TTL |
 | `.claude/rules/observability.md` | Tracing Jaeger, log Loki/Grafana, hạ tầng docker-compose |
@@ -51,12 +53,12 @@ Hệ thống ngân hàng microservice: **Java 21**, **Spring Boot 3.5.7**, **Spr
 - Git Bash: gọi `mvn.cmd` (`mvn` có thể lỗi "Could not find or load main class ...Launcher" và in ra rỗng); chỉ kết luận khi thấy `BUILD SUCCESS`.
 - Build: `mvn.cmd clean install -DskipTests`; một service kèm phụ thuộc: `mvn.cmd -pl account-service -am clean install`.
 - Test: `mvn.cmd -pl account-service test [-Dtest=Class#method]`; IT (Docker): thêm `verify -Pintegration-test`. Chi tiết, Saga E2E, lỗi khóa jar trên Windows: skill `build-and-test`.
-- Chạy: `mvn.cmd -pl <module> spring-boot:run`. Thứ tự `discovery-server` → `config-server` (bắt buộc trước, `configserver:` không optional) → các service → `api-gateway`; hạ tầng `docker compose up -d` (Oracle chạy riêng). Chi tiết: `/run-local`.
+- Chạy: `mvn.cmd -pl <module> spring-boot:run`. Thứ tự `discovery-server` → `config-server` (bắt buộc trước, `configserver:` không optional) → các service (gồm `interbank-service`) → `api-gateway`; hạ tầng `docker compose up -d` (Oracle chạy riêng). Chi tiết: `/run-local`.
 
 ## Kiến trúc — quy tắc chung
 - Database-per-service: không truy cập DB của service khác — dùng REST, Kafka hoặc kênh Redis. Giao dịch liên service theo Saga qua Kafka, có bù trừ.
 - Cấu hình tập trung ở `config-server/src/main/resources/config-repo/` (`application.yml` chung + `<service>.yml`); `application.yml` trong service chỉ có port, tên, `spring.config.import`. Thư mục **không** tên `config/` (Spring Boot sẽ tự nạp cho chính config-server).
-- Bí mật lấy từ biến môi trường (`AES_ENCRYPTION_KEY`, `OTP_HMAC_SECRET`, `DB_PASSWORD`, `REDIS_PASSWORD`, `MAIL_PASSWORD`, `SMS_GATEWAY_API_KEY`...); mặc định trong config-repo chỉ cho dev.
+- Bí mật lấy từ biến môi trường (`AES_ENCRYPTION_KEY`, `OTP_HMAC_SECRET`, `NAPAS_WEBHOOK_SECRET`, `DB_PASSWORD`, `REDIS_PASSWORD`, `MAIL_PASSWORD`, `SMS_GATEWAY_API_KEY`, `NAPAS_API_KEY`...); mặc định trong config-repo chỉ cho dev.
 - Địa chỉ hạ tầng ghi đè bằng biến môi trường: `CONFIG_SERVER_URL`, `EUREKA_URL`, `DB_URL`/`DB_USERNAME`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`/`REDIS_PORT`, `HAZELCAST_MEMBERS`, `LOG_DIR`... (biến riêng của từng vùng ghi ở rule tương ứng).
 - **Controller có prefix mới → thêm path vào `GatewayRouteConfig`**, nếu không gọi qua gateway sẽ 404.
 
@@ -79,7 +81,7 @@ Package gốc `com.bank.<service>`:
 - Ngoại lệ: `api-gateway` có package `filter` (`GlobalFilter`); `common-lib` có thêm `audit`, `crypto`, `event`, `redis`, `resilience`, `security`, `tracing`, `util`.
 
 ### Cơ sở dữ liệu
-- Schema riêng `BANK_AUTH`, `BANK_CUSTOMER`, `BANK_ACCOUNT`, `BANK_TRANSACTION`, `BANK_NOTIFICATION`; không FK giữa các schema. Hibernate `ddl-auto=validate` → đổi schema bằng script trong `database/oracle/` (skill `add-oracle-migration`, **không sửa file đã chạy**).
+- Schema riêng `BANK_AUTH`, `BANK_CUSTOMER`, `BANK_ACCOUNT`, `BANK_TRANSACTION`, `BANK_NOTIFICATION`, `BANK_INTERBANK`; không FK giữa các schema. Hibernate `ddl-auto=validate` → đổi schema bằng script trong `database/oracle/` (skill `add-oracle-migration`, **không sửa file đã chạy**).
 - **Thêm migration mới → bổ sung vào danh sách script của** `AccountBalanceConcurrencyIT`, `TransactionLimitConcurrencyIT` (nếu thuộc schema tương ứng) và `TransferSagaIT.createSchemas()`.
 
 ### Job định kỳ

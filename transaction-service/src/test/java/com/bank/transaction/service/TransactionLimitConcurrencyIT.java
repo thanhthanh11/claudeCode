@@ -80,7 +80,8 @@ class TransactionLimitConcurrencyIT {
         try (Connection connection = DriverManager.getConnection(ORACLE.getJdbcUrl(), ORACLE.getUsername(),
                 ORACLE.getPassword())) {
             for (String script : List.of("04_transaction_schema.sql", "06_transaction_saga_timeout.sql",
-                    "09_transaction_ops_limits_fees.sql", "11_transaction_outbox_trace.sql")) {
+                    "09_transaction_ops_limits_fees.sql", "11_transaction_outbox_trace.sql",
+                    "17_transaction_interbank.sql")) {
                 ScriptUtils.executeSqlScript(connection, new FileSystemResource("../database/oracle/" + script));
             }
         }

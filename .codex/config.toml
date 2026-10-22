@@ -1,0 +1,6 @@
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
+MSYS_NO_PATHCONV = "1"

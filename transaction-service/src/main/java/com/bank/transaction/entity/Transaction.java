@@ -1,9 +1,11 @@
 package com.bank.transaction.entity;
 
+import com.bank.common.crypto.EncryptedStringConverter;
 import com.bank.transaction.enums.SagaStepEnum;
 import com.bank.transaction.enums.TransactionStatusEnum;
 import com.bank.transaction.enums.TransactionTypeEnum;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -72,6 +74,23 @@ public class Transaction {
 
     @Column(length = 500)
     private String failureReason;
+
+    /** Mã ngân hàng đối tác (BIN Napas) — chỉ có ở INTERBANK_OUT / INTERBANK_IN. */
+    @Column(length = 20)
+    private String counterpartyBankCode;
+
+    /** Số tài khoản ở ngân hàng đối tác: người nhận (chuyển đi) hoặc người gửi (tiền đến). */
+    @Column(length = 34)
+    private String counterpartyAccount;
+
+    /** Tên chủ tài khoản đối tác (mã hóa AES-GCM). */
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(length = 400)
+    private String counterpartyName;
+
+    /** Mã tham chiếu Napas. */
+    @Column(length = 64)
+    private String externalRef;
 
     /** BANK_AUTH.USERS.ID của người tạo giao dịch. */
     private Long initiatedBy;

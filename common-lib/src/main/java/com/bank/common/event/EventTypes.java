@@ -19,6 +19,14 @@ public final class EventTypes {
     public static final String TRANSACTION_COMPLETED = "TRANSACTION_COMPLETED";
     public static final String TRANSACTION_FAILED = "TRANSACTION_FAILED";
 
+    // transaction-service → interbank-service
+    public static final String INTERBANK_TRANSFER_REQUESTED = "INTERBANK_TRANSFER_REQUESTED";
+    public static final String INTERBANK_INBOUND_SETTLED = "INTERBANK_INBOUND_SETTLED";
+    public static final String INTERBANK_INBOUND_RETURNED = "INTERBANK_INBOUND_RETURNED";
+    // interbank-service → transaction-service
+    public static final String INTERBANK_TRANSFER_COMPLETED = "INTERBANK_TRANSFER_COMPLETED";
+    public static final String INTERBANK_TRANSFER_REJECTED = "INTERBANK_TRANSFER_REJECTED";
+    public static final String INTERBANK_INBOUND_RECEIVED = "INTERBANK_INBOUND_RECEIVED";
     // Audit
     public static final String AUDIT_RECORDED = "AUDIT_RECORDED";
 

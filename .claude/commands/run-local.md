@@ -7,7 +7,7 @@ Giúp tôi chạy hệ thống local cho: $ARGUMENTS
 
 1. Kiểm tra hạ tầng bằng `docker compose ps` (Redis 6379, Kafka 9092, Jaeger 16686, Mailpit 1025/8025). Nếu chưa chạy, đề xuất `docker compose up -d`.
 2. Kiểm tra Oracle local (`localhost:1521/orcl`) có kết nối được không.
-3. Thứ tự khởi động: `discovery-server` (8761) → `config-server` (8888) → auth/customer/account/transaction/notification → `api-gateway` (8080).
+3. Thứ tự khởi động: `discovery-server` (8761) → `config-server` (8888) → auth/customer/account/transaction/notification/interbank (8086) → `api-gateway` (8080).
    Lệnh: `mvn -pl <module> spring-boot:run` (chạy nền).
 4. Đợi ~30 giây để service đăng ký Eureka, kiểm tra `http://localhost:8761`.
 5. Báo lại service nào đã lên, service nào lỗi (kèm dòng log lỗi đầu tiên).

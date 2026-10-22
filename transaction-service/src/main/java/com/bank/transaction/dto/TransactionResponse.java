@@ -20,6 +20,9 @@ public record TransactionResponse(
         SagaStepEnum sagaStep,
         String description,
         String failureReason,
+        String counterpartyBankCode,
+        String counterpartyAccount,
+        String counterpartyName,
         LocalDateTime createdAt,
         LocalDateTime completedAt) {
 }

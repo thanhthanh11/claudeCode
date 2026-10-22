@@ -16,6 +16,9 @@ paths:
   - Quá `bank.saga.step-timeout`: `SagaTimeoutMonitorService` gửi lại lệnh bước hiện tại (`resendCurrentCommand`, đếm `RETRY_COUNT`, reset khi sang bước mới); quá `bank.saga.max-retries` → `MANUAL_REVIEW`; kết quả đến muộn vẫn được áp dụng.
 - Mọi event Saga phát ra qua `OutboxService.enqueue` (`Propagation.MANDATORY`); **không** gọi `KafkaTemplate` trực tiếp.
 - API tạo giao dịch trả **202** + `PROCESSING`; tra kết quả `GET /api/transactions/{transactionRef}`.
+- **Chuyển qua SĐT** (`transfer-by-phone`): `AccountLookupService.resolvePhoneAlias` (Redis `account.resolve-phone-alias`) rồi gọi lại `transfer` — không có loại giao dịch riêng. Retry cùng key trả giao dịch cũ, không phân giải lại.
+- **Liên ngân hàng chiều đi** (`INTERBANK_OUT`, `interbank-transfer`): chỉ VND; tra tên qua `InterbankLookupService` (Redis `interbank.name-inquiry`), lưu `COUNTERPARTY_*`; `TO_ACCOUNT_NUMBER` null. Saga `DEBIT_REQUESTED → INTERBANK_REQUESTED` (lệnh `INTERBANK_TRANSFER_REQUESTED` lên `bank.interbank.commands`) → `INTERBANK_TRANSFER_COMPLETED` = COMPLETED / `REJECTED` = hoàn tiền + phí. **Timeout không bao giờ tự hoàn tiền** — `resendCurrentCommand` gửi lại lệnh (interbank-service idempotent, publish lại kết quả nếu đã có) rồi MANUAL_REVIEW. Kết quả trái ngược sau khi kết thúc → MANUAL_REVIEW (`LATE_INTERBANK_*_REASON`). OTP như `TRANSFER` (`confirmPending` nhận cả hai loại).
+- **Liên ngân hàng tiền đến** (`INTERBANK_IN`): `InterbankEventConsumerService` (`bank.interbank.events`) → `createInboundTransfer`, key `0:ibin-<napasRef>`, `EXTERNAL_REF = napasRef`, không phí/hạn mức; Saga như DEPOSIT, kết quả báo lại `INTERBANK_INBOUND_SETTLED / RETURNED`. Đối soát coi `INTERBANK_OUT` như WITHDRAWAL, `INTERBANK_IN` như DEPOSIT.
 - Bắt buộc header `Idempotency-Key` (8–40 ký tự), lưu `<userId>:<key>`: cùng key + cùng nội dung → trả giao dịch cũ; khác nội dung → 409.
 
 ## Phí (`FEE_SCHEDULES`, `FeeScheduleService`)

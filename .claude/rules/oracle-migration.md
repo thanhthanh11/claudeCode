@@ -15,6 +15,7 @@ paths:
   - `transaction-service/src/test/java/com/bank/transaction/service/TransactionLimitConcurrencyIT.java`
   - `auth-service/src/test/java/com/bank/auth/service/RefreshTokenConcurrencyIT.java` (auth)
   - `saga-it/.../TransferSagaIT.createSchemas()` (customer / account / transaction)
+  - `BANK_INTERBANK` chưa có IT (chỉ unit test) — khi thêm IT cho interbank-service thì chạy `19_` bằng user chủ schema
 - Native query khóa theo lô: `... ORDER BY ID FOR UPDATE SKIP LOCKED` trả `Stream`, chỉ đọc N dòng (`default` method `lock*Batch` trong repository). Không dùng `FETCH FIRST` cùng `FOR UPDATE` (ORA-02014) và không giới hạn bằng `ROWNUM` (Oracle đánh ROWNUM trước khi bỏ qua dòng bị khóa → instance khác nhận lô rỗng).
 - Driver `com.oracle.database.jdbc:ojdbc11`. Mapping JPA tương ứng: rule `jpa-entity`.
 - Kết nối local, user/mật khẩu từng schema, lệnh sqlplus: xem `CLAUDE.local.md`.
@@ -32,5 +33,9 @@ paths:
 | `13` | customer | Mã hóa PII: nới cột, `ID_NUMBER_HASH` (unique), `PHONE_HASH` |
 | `14` | auth | Mã hóa `USERS.EMAIL`, `EMAIL_HASH` (unique) |
 | `15` | notification | Mã hóa `NOTIFICATIONS.RECIPIENT` (nới cột) |
+| `16` | account | `PHONE_ALIASES` (alias SĐT → tài khoản, `PHONE_HASH` unique) |
+| `17` | transaction | Loại `INTERBANK_OUT/IN`, bước `INTERBANK_REQUESTED`, cột `COUNTERPARTY_*`, `EXTERNAL_REF`; phí + hạn mức liên ngân hàng |
+| `18` | — (BANK_ADMIN) | Tạo user/schema `BANK_INTERBANK` |
+| `19` | interbank | `INTERBANK_BANKS` (seed BIN), `OUTBOUND_TRANSFERS`, `INBOUND_TRANSFERS` |
 
 Thêm migration mới → bổ sung một dòng vào bảng này.

@@ -3,8 +3,11 @@ package com.bank.transaction.service;
 import com.bank.common.audit.AuditActions;
 import com.bank.common.audit.AuditPublisher;
 import com.bank.common.dto.AccountInfoResponse;
+import com.bank.common.dto.NameInquiryResponse;
 import com.bank.common.dto.PageResponse;
+import com.bank.common.dto.PhoneAliasLookupResponse;
 import com.bank.common.event.EventTypes;
+import com.bank.common.event.InterbankInboundPayload;
 import com.bank.common.exception.BadRequestException;
 import com.bank.common.exception.ForbiddenException;
 import com.bank.common.security.AuthUser;
@@ -13,6 +16,8 @@ import com.bank.common.security.SecurityUtils;
 import com.bank.common.util.MaskingUtils;
 import com.bank.transaction.config.OtpConfig;
 import com.bank.transaction.dto.CashTransactionRequest;
+import com.bank.transaction.dto.InterbankTransferRequest;
+import com.bank.transaction.dto.PhoneTransferRequest;
 import com.bank.transaction.dto.TransactionLimitResponse;
 import com.bank.transaction.dto.TransactionResponse;
 import com.bank.transaction.dto.TransferRequest;
@@ -52,11 +57,14 @@ public class TransactionService {
     private static final DateTimeFormatter REF_TIME = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String INTERNAL_ACCOUNT_TYPE = "INTERNAL";
+    private static final String INTERBANK_CURRENCY = "VND";
+    private static final int MAX_DESCRIPTION_LENGTH = 255;
 
     private final TransactionRepository transactionRepository;
     private final TransactionPersistenceService persistenceService;
     private final AccountLookupService accountLookupService;
     private final CustomerLookupService customerLookupService;
+    private final InterbankLookupService interbankLookupService;
     private final FeeScheduleService feeScheduleService;
     private final TransactionLimitService limitService;
     private final TransactionOtpService otpService;
@@ -101,6 +109,103 @@ public class TransactionService {
                 throw new ForbiddenException("Tài khoản nguồn không còn thuộc khách hàng của lệnh định kỳ");
             }
         }, false);
+    }
+
+    /**
+     * Chuyển tiền tới số điện thoại: phân giải alias ra tài khoản nhận rồi xử lý như chuyển khoản nội bộ.
+     * Gửi lại cùng Idempotency-Key trả về giao dịch đã tạo theo tài khoản nhận lúc tạo (alias có thể đã đổi sau đó).
+     */
+    public TransactionResponse transferByPhone(PhoneTransferRequest request, String idempotencyKey) {
+        AuthUser currentUser = SecurityUtils.requireCurrentUser();
+        Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(scopeKey(currentUser, idempotencyKey));
+        if (existing.isPresent()) {
+            return replay(existing.get(), TransactionTypeEnum.TRANSFER, request.fromAccountNumber(),
+                    existing.get().getToAccountNumber(), request.amount());
+        }
+        PhoneAliasLookupResponse recipient = accountLookupService.resolvePhoneAlias(request.phone());
+        return transfer(new TransferRequest(request.fromAccountNumber(), recipient.accountNumber(), request.amount(),
+                request.description()), idempotencyKey);
+    }
+
+    /**
+     * Chuyển tiền ra ngân hàng khác qua Napas: kiểm tra tài khoản nguồn như chuyển khoản, tra tên người nhận qua
+     * interbank-service (lưu lại để đối chiếu), rồi chạy Saga DEBIT → INTERBANK_REQUESTED. Chỉ hỗ trợ VND.
+     */
+    public TransactionResponse interbankTransfer(InterbankTransferRequest request, String idempotencyKey) {
+        AuthUser currentUser = SecurityUtils.requireCurrentUser();
+        String scopedKey = scopeKey(currentUser, idempotencyKey);
+        Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(scopedKey);
+        if (existing.isPresent()) {
+            return replayInterbank(existing.get(), request);
+        }
+        AccountInfoResponse from = accountLookupService.getAccount(request.fromAccountNumber());
+        if (!currentUser.isStaff()) {
+            ensureOwner(from, currentUser);
+        }
+        requireCustomerAccount(from);
+        requireActive(from, "nguồn");
+        requireActiveCustomer(from);
+        if (!INTERBANK_CURRENCY.equals(from.currency())) {
+            throw new BadRequestException("INTERBANK_CURRENCY_NOT_SUPPORTED",
+                    "Chuyển tiền liên ngân hàng chỉ hỗ trợ tài khoản " + INTERBANK_CURRENCY);
+        }
+        NameInquiryResponse beneficiary = interbankLookupService.nameInquiry(request.bankCode(),
+                request.beneficiaryAccount());
+        BigDecimal fee = feeScheduleService.findSchedule(TransactionTypeEnum.INTERBANK_OUT, from.currency())
+                .calculateFee(request.amount(), from.currency());
+        requireSufficientBalance(from, request.amount().add(fee));
+        TransactionLimitResponse limit = limitService.findLimit(TransactionTypeEnum.INTERBANK_OUT, from.accountType(),
+                from.currency());
+
+        Transaction transaction = newTransaction(TransactionTypeEnum.INTERBANK_OUT, scopedKey, from.accountNumber(),
+                null, request.amount(), fee, from.currency(), request.description(), currentUser.userId(),
+                SagaStepEnum.DEBIT_REQUESTED);
+        transaction.setCounterpartyBankCode(request.bankCode());
+        transaction.setCounterpartyAccount(request.beneficiaryAccount());
+        transaction.setCounterpartyName(beneficiary.accountName());
+        boolean customerInitiated = currentUser.hasRole(RoleCodes.CUSTOMER) && !currentUser.isStaff();
+        TransactionResponse response = customerInitiated && otpConfig.isRequired(request.amount(), from.currency())
+                ? startPending(transaction, limit, from)
+                : start(transaction, EventTypes.ACCOUNT_DEBIT_REQUESTED, from.accountNumber(), limit,
+                from.accountNumber());
+        if (currentUser.isStaff()) {
+            auditPublisher.publish(AuditActions.STAFF_TRANSFER_CREATED, "TRANSACTION", response.transactionRef(),
+                    "INTERBANK " + response.amount().toPlainString() + " " + response.currency());
+        }
+        return response;
+    }
+
+    /**
+     * Tiền từ ngân hàng khác chuyển đến (interbank-service đã xác thực Napas): tạo giao dịch INTERBANK_IN và lệnh cộng
+     * tiền, không phí, không hạn mức. Idempotent theo mã Napas — nhận lại cùng message trả về giao dịch đã tạo.
+     * Tài khoản nhận không hợp lệ được account-service trả CREDIT_FAILED → Saga báo interbank-service trả tiền về.
+     */
+    public TransactionResponse createInboundTransfer(InterbankInboundPayload inbound) {
+        String key = inboundIdempotencyKey(inbound.napasRef());
+        Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(key);
+        if (existing.isPresent()) {
+            return toResponse(existing.get());
+        }
+        Transaction transaction = newTransaction(TransactionTypeEnum.INTERBANK_IN, key, null,
+                inbound.beneficiaryAccount(), inbound.amount(), BigDecimal.ZERO, inbound.currency(),
+                truncate(inbound.description(), MAX_DESCRIPTION_LENGTH), null, SagaStepEnum.CREDIT_REQUESTED);
+        transaction.setCounterpartyBankCode(inbound.sourceBankCode());
+        transaction.setCounterpartyAccount(inbound.sourceAccount());
+        transaction.setCounterpartyName(inbound.sourceName());
+        transaction.setExternalRef(inbound.napasRef());
+        try {
+            Transaction saved = persistenceService.createWithCommand(transaction, EventTypes.ACCOUNT_CREDIT_REQUESTED,
+                    inbound.beneficiaryAccount(), TransactionLimitResponse.NONE, inbound.beneficiaryAccount());
+            log.info("Nhận tiền liên ngân hàng {} (Napas {}) vào tài khoản {}", saved.getTransactionRef(),
+                    inbound.napasRef(), MaskingUtils.maskAccountNumber(inbound.beneficiaryAccount()));
+            return toResponse(saved);
+        } catch (DataIntegrityViolationException e) {
+            return toResponse(transactionRepository.findByIdempotencyKey(key).orElseThrow(() -> e));
+        }
+    }
+
+    static String inboundIdempotencyKey(String napasRef) {
+        return "0:ibin-" + napasRef;
     }
 
     private TransactionResponse createTransfer(TransferRequest request, String scopedKey, Long initiatedBy,
@@ -311,6 +416,18 @@ public class TransactionService {
         return toResponse(existing);
     }
 
+    private static TransactionResponse replayInterbank(Transaction existing, InterbankTransferRequest request) {
+        boolean same = existing.getTransactionType() == TransactionTypeEnum.INTERBANK_OUT
+                && Objects.equals(existing.getFromAccountNumber(), request.fromAccountNumber())
+                && Objects.equals(existing.getCounterpartyBankCode(), request.bankCode())
+                && Objects.equals(existing.getCounterpartyAccount(), request.beneficiaryAccount())
+                && existing.getAmount().compareTo(request.amount()) == 0;
+        if (!same) {
+            throw new IdempotencyConflictException();
+        }
+        return toResponse(existing);
+    }
+
     private void ensureOwner(AccountInfoResponse account, AuthUser user) {
         Long customerId = customerLookupService.getCustomerIdByUserId(user.userId());
         if (!Objects.equals(account.customerId(), customerId)) {
@@ -349,6 +466,10 @@ public class TransactionService {
         if (account.availableBalance() != null && account.availableBalance().compareTo(totalAmount) < 0) {
             throw new BadRequestException("INSUFFICIENT_BALANCE", "Số dư khả dụng không đủ (gồm cả phí giao dịch)");
         }
+    }
+
+    private static String truncate(String value, int maxLength) {
+        return value == null || value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
     private static String scopeKey(AuthUser user, String idempotencyKey) {
@@ -392,6 +513,8 @@ public class TransactionService {
                 transaction.getTransactionType(), transaction.getFromAccountNumber(), transaction.getToAccountNumber(),
                 transaction.getAmount(), transaction.getFee(), transaction.getCurrency(), transaction.getStatus(),
                 transaction.getSagaStep(), transaction.getDescription(), transaction.getFailureReason(),
+                transaction.getCounterpartyBankCode(), transaction.getCounterpartyAccount(),
+                transaction.getCounterpartyName(),
                 transaction.getCreatedAt(), transaction.getCompletedAt());
     }
 }

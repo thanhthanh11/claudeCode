@@ -40,8 +40,8 @@ import java.util.List;
  * Bút toán kỳ vọng theo kết quả (A = nguồn, B = nhận, FEE = tài khoản thu phí nội bộ):
  * <ul>
  *   <li>TRANSFER COMPLETED: DEBIT A (amount + fee), CREDIT B (amount), CREDIT FEE (fee)</li>
- *   <li>WITHDRAWAL COMPLETED: DEBIT A (amount + fee), CREDIT FEE (fee)</li>
- *   <li>DEPOSIT COMPLETED: CREDIT B (amount)</li>
+ *   <li>WITHDRAWAL / INTERBANK_OUT COMPLETED: DEBIT A (amount + fee), CREDIT FEE (fee)</li>
+ *   <li>DEPOSIT / INTERBANK_IN COMPLETED: CREDIT B (amount)</li>
  *   <li>COMPENSATED: DEBIT A + CREDIT A (amount + fee), CREDIT FEE + DEBIT FEE (fee)</li>
  *   <li>FAILED (không còn chờ hoàn tiền): không có bút toán nào</li>
  * </ul>
@@ -135,7 +135,8 @@ public class TransactionReconciliationService {
         List<String> entries = new ArrayList<>();
         switch (transaction.getStatus()) {
             case COMPLETED -> {
-                if (transaction.getTransactionType() == TransactionTypeEnum.DEPOSIT) {
+                if (transaction.getTransactionType() == TransactionTypeEnum.DEPOSIT
+                        || transaction.getTransactionType() == TransactionTypeEnum.INTERBANK_IN) {
                     entries.add(entry(transaction.getToAccountNumber(), "CREDIT", transaction.getAmount()));
                 } else {
                     entries.add(entry(transaction.getFromAccountNumber(), "DEBIT", debitTotal));

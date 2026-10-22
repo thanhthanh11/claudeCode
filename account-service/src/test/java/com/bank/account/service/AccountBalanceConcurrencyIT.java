@@ -77,6 +77,8 @@ class AccountBalanceConcurrencyIT {
                     new FileSystemResource("../database/oracle/08_account_holds_reconciliation_fee.sql"));
             ScriptUtils.executeSqlScript(connection,
                     new FileSystemResource("../database/oracle/12_account_fee_account_shards.sql"));
+            ScriptUtils.executeSqlScript(connection,
+                    new FileSystemResource("../database/oracle/16_account_phone_aliases.sql"));
         }
     }
 

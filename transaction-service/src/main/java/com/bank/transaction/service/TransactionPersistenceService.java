@@ -53,7 +53,7 @@ public class TransactionPersistenceService {
         return transaction;
     }
 
-    /** OTP hợp lệ: PENDING → PROCESSING và gửi lệnh trừ tiền. Chỉ áp dụng cho chuyển khoản. */
+    /** OTP hợp lệ: PENDING → PROCESSING và gửi lệnh trừ tiền. Chỉ áp dụng cho chuyển khoản (nội bộ / liên ngân hàng). */
     @Transactional
     public Transaction confirmPending(String transactionRef) {
         Transaction transaction = transactionRepository.findByTransactionRefForUpdate(transactionRef)
@@ -61,8 +61,9 @@ public class TransactionPersistenceService {
         if (transaction.getStatus() != TransactionStatusEnum.PENDING) {
             return transaction;
         }
-        if (transaction.getTransactionType() != TransactionTypeEnum.TRANSFER) {
-            throw new IllegalStateException("Chỉ giao dịch chuyển khoản dùng OTP: " + transactionRef);
+        if (transaction.getTransactionType() != TransactionTypeEnum.TRANSFER
+                && transaction.getTransactionType() != TransactionTypeEnum.INTERBANK_OUT) {
+            throw new IllegalStateException("Chỉ giao dịch chuyển khoản / liên ngân hàng dùng OTP: " + transactionRef);
         }
         transaction.setStatus(TransactionStatusEnum.PROCESSING);
         transaction.setSagaStep(SagaStepEnum.DEBIT_REQUESTED);

@@ -3,14 +3,20 @@ package com.bank.transaction.service;
 import com.bank.common.audit.AuditPublisher;
 import com.bank.common.dto.AccountInfoResponse;
 import com.bank.common.dto.CustomerInfoResponse;
+import com.bank.common.dto.NameInquiryResponse;
+import com.bank.common.dto.PhoneAliasLookupResponse;
 import com.bank.common.event.EventTypes;
+import com.bank.common.event.InterbankInboundPayload;
 import com.bank.common.exception.BadRequestException;
+import com.bank.transaction.exception.IdempotencyConflictException;
 import com.bank.common.security.AuthUser;
 import com.bank.common.security.RoleCodes;
 import com.bank.common.security.SecurityUtils;
 import com.bank.transaction.config.OtpConfig;
 import com.bank.transaction.dto.CashTransactionRequest;
 import com.bank.transaction.dto.FeeScheduleResponse;
+import com.bank.transaction.dto.InterbankTransferRequest;
+import com.bank.transaction.dto.PhoneTransferRequest;
 import com.bank.transaction.dto.TransactionLimitResponse;
 import com.bank.transaction.dto.TransactionResponse;
 import com.bank.transaction.dto.TransferRequest;
@@ -60,6 +66,8 @@ class TransactionServiceTest {
     @Mock
     private CustomerLookupService customerLookupService;
     @Mock
+    private InterbankLookupService interbankLookupService;
+    @Mock
     private FeeScheduleService feeScheduleService;
     @Mock
     private TransactionLimitService limitService;
@@ -74,7 +82,8 @@ class TransactionServiceTest {
     @BeforeEach
     void setUp() {
         transactionService = new TransactionService(transactionRepository, persistenceService, accountLookupService,
-                customerLookupService, feeScheduleService, limitService, otpService, otpConfig, auditPublisher);
+                customerLookupService, interbankLookupService, feeScheduleService, limitService, otpService, otpConfig,
+                auditPublisher);
         login(new AuthUser(9L, "teller", Set.of(RoleCodes.TELLER), Set.of()));
         lenient().when(transactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
         lenient().when(accountLookupService.getAccount(FROM)).thenReturn(account(FROM, 1L, "PAYMENT"));
@@ -198,6 +207,126 @@ class TransactionServiceTest {
 
         assertBadRequest(() -> transactionService.confirm("TX1", "000000"), "OTP_ATTEMPTS_EXCEEDED");
         verify(persistenceService).failPending(eq("TX1"), anyString());
+    }
+
+    @Test
+    void transferByPhoneShouldResolveAliasAndRunNormalTransfer() {
+        when(accountLookupService.resolvePhoneAlias("0912345678"))
+                .thenReturn(new PhoneAliasLookupResponse(TO, "VND", "NGUYEN V** A*"));
+
+        TransactionResponse response = transactionService.transferByPhone(
+                new PhoneTransferRequest(FROM, "0912345678", new BigDecimal("100000"), null), IDEMPOTENCY_KEY);
+
+        assertThat(response.transactionType()).isEqualTo(TransactionTypeEnum.TRANSFER);
+        assertThat(response.toAccountNumber()).isEqualTo(TO);
+        verify(persistenceService).createWithCommand(any(), eq(EventTypes.ACCOUNT_DEBIT_REQUESTED), eq(FROM), any(),
+                eq(FROM));
+    }
+
+    @Test
+    void transferByPhoneRetryShouldReturnExistingTransactionWithoutResolvingAgain() {
+        Transaction existing = pendingTransaction(9L);
+        existing.setStatus(TransactionStatusEnum.PROCESSING);
+        when(transactionRepository.findByIdempotencyKey("9:" + IDEMPOTENCY_KEY)).thenReturn(Optional.of(existing));
+
+        TransactionResponse response = transactionService.transferByPhone(
+                new PhoneTransferRequest(FROM, "0912345678", new BigDecimal("100000"), null), IDEMPOTENCY_KEY);
+
+        assertThat(response.transactionRef()).isEqualTo("TX1");
+        verify(accountLookupService, never()).resolvePhoneAlias(any());
+    }
+
+    @Test
+    void interbankTransferShouldSaveBeneficiaryAndSendDebitCommand() {
+        when(interbankLookupService.nameInquiry("970436", "0011001234567"))
+                .thenReturn(new NameInquiryResponse("970436", "Vietcombank", "0011001234567", "TRAN THI B"));
+        when(feeScheduleService.findSchedule(TransactionTypeEnum.INTERBANK_OUT, "VND")).thenReturn(TRANSFER_FEE);
+
+        transactionService.interbankTransfer(interbank("10000000"), IDEMPOTENCY_KEY);
+
+        ArgumentCaptor<Transaction> saved = ArgumentCaptor.forClass(Transaction.class);
+        verify(persistenceService).createWithCommand(saved.capture(), eq(EventTypes.ACCOUNT_DEBIT_REQUESTED), eq(FROM),
+                any(), eq(FROM));
+        Transaction transaction = saved.getValue();
+        assertThat(transaction.getTransactionType()).isEqualTo(TransactionTypeEnum.INTERBANK_OUT);
+        assertThat(transaction.getToAccountNumber()).isNull();
+        assertThat(transaction.getCounterpartyBankCode()).isEqualTo("970436");
+        assertThat(transaction.getCounterpartyName()).isEqualTo("TRAN THI B");
+        assertThat(transaction.getFee()).isEqualByComparingTo("2000");
+        verify(auditPublisher).publish(any(), eq("TRANSACTION"), any(), anyString());
+    }
+
+    @Test
+    void interbankTransferFromForeignCurrencyAccountShouldBeRejected() {
+        when(accountLookupService.getAccount(FROM)).thenReturn(new AccountInfoResponse(1L, FROM, 1L, "PAYMENT", "USD",
+                new BigDecimal("1000"), new BigDecimal("1000"), "ACTIVE"));
+
+        assertBadRequest(() -> transactionService.interbankTransfer(interbank("100"), IDEMPOTENCY_KEY),
+                "INTERBANK_CURRENCY_NOT_SUPPORTED");
+        verify(interbankLookupService, never()).nameInquiry(any(), any());
+    }
+
+    @Test
+    void customerInterbankTransferAboveThresholdShouldWaitForOtp() {
+        login(new AuthUser(5L, "customer", Set.of(RoleCodes.CUSTOMER), Set.of()));
+        when(customerLookupService.getCustomerIdByUserId(5L)).thenReturn(1L);
+        otpConfig.getThresholds().put("VND", new BigDecimal("100000"));
+        when(interbankLookupService.nameInquiry(any(), any()))
+                .thenReturn(new NameInquiryResponse("970436", "Vietcombank", "0011001234567", "TRAN THI B"));
+
+        TransactionResponse response = transactionService.interbankTransfer(interbank("200000"), IDEMPOTENCY_KEY);
+
+        assertThat(response.status()).isEqualTo(TransactionStatusEnum.PENDING);
+        verify(otpService).issue(any(), eq(1L));
+    }
+
+    @Test
+    void interbankRetryWithDifferentBeneficiaryShouldConflict() {
+        Transaction existing = pendingTransaction(9L);
+        existing.setTransactionType(TransactionTypeEnum.INTERBANK_OUT);
+        existing.setToAccountNumber(null);
+        existing.setCounterpartyBankCode("970436");
+        existing.setCounterpartyAccount("9999999999");
+        existing.setAmount(new BigDecimal("10000000"));
+        when(transactionRepository.findByIdempotencyKey("9:" + IDEMPOTENCY_KEY)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> transactionService.interbankTransfer(interbank("10000000"), IDEMPOTENCY_KEY))
+                .isInstanceOf(IdempotencyConflictException.class);
+    }
+
+    @Test
+    void inboundTransferShouldCreateCreditCommandWithoutFeeOrLimit() {
+        transactionService.createInboundTransfer(inbound());
+
+        ArgumentCaptor<Transaction> saved = ArgumentCaptor.forClass(Transaction.class);
+        verify(persistenceService).createWithCommand(saved.capture(), eq(EventTypes.ACCOUNT_CREDIT_REQUESTED), eq(TO),
+                eq(TransactionLimitResponse.NONE), eq(TO));
+        Transaction transaction = saved.getValue();
+        assertThat(transaction.getTransactionType()).isEqualTo(TransactionTypeEnum.INTERBANK_IN);
+        assertThat(transaction.getIdempotencyKey()).isEqualTo("0:ibin-NP0001");
+        assertThat(transaction.getExternalRef()).isEqualTo("NP0001");
+        assertThat(transaction.getFee()).isEqualByComparingTo("0");
+        assertThat(transaction.getFromAccountNumber()).isNull();
+    }
+
+    @Test
+    void duplicateInboundTransferShouldReturnExistingTransaction() {
+        Transaction existing = pendingTransaction(null);
+        when(transactionRepository.findByIdempotencyKey("0:ibin-NP0001")).thenReturn(Optional.of(existing));
+
+        TransactionResponse response = transactionService.createInboundTransfer(inbound());
+
+        assertThat(response.transactionRef()).isEqualTo("TX1");
+        verify(persistenceService, never()).createWithCommand(any(), any(), any(), any(), any());
+    }
+
+    private static InterbankTransferRequest interbank(String amount) {
+        return new InterbankTransferRequest(FROM, "970436", "0011001234567", new BigDecimal(amount), "Tra no");
+    }
+
+    private static InterbankInboundPayload inbound() {
+        return new InterbankInboundPayload("NP0001", "970436", "0011001234567", "TRAN THI B", TO,
+                new BigDecimal("500000"), "VND", "Chuyen tien");
     }
 
     private static Transaction pendingTransaction(Long initiatedBy) {

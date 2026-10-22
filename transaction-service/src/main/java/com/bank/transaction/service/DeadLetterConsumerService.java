@@ -37,6 +37,8 @@ public class DeadLetterConsumerService {
                     KafkaTopics.ACCOUNT_COMMANDS + KafkaTopics.DLT_SUFFIX,
                     KafkaTopics.TRANSACTION_EVENTS + KafkaTopics.DLT_SUFFIX,
                     KafkaTopics.NOTIFICATION_EVENTS + KafkaTopics.DLT_SUFFIX,
+                    KafkaTopics.INTERBANK_COMMANDS + KafkaTopics.DLT_SUFFIX,
+                    KafkaTopics.INTERBANK_EVENTS + KafkaTopics.DLT_SUFFIX,
                     KafkaTopics.AUDIT_EVENTS + KafkaTopics.DLT_SUFFIX},
             groupId = "${spring.application.name}-dlt",
             containerFactory = KafkaDeadLetterConfig.DEAD_LETTER_LISTENER_FACTORY)

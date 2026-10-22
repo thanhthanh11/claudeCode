@@ -4,6 +4,9 @@ import com.bank.common.event.AccountCommandPayload;
 import com.bank.common.event.AccountResultPayload;
 import com.bank.common.event.EventEnvelope;
 import com.bank.common.event.EventTypes;
+import com.bank.common.event.InterbankInboundResultPayload;
+import com.bank.common.event.InterbankResultPayload;
+import com.bank.common.event.InterbankTransferPayload;
 import com.bank.common.event.KafkaTopics;
 import com.bank.transaction.entity.Transaction;
 import com.bank.transaction.enums.SagaStepEnum;
@@ -190,6 +193,156 @@ class TransactionSagaServiceTest {
 
         assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.MANUAL_REVIEW);
         verify(outboxService, never()).enqueue(any(), any(), any(), any());
+    }
+
+    @Test
+    void debitedInterbankTransferShouldRequestInterbankTransfer() {
+        interbankOut();
+
+        sagaService.handle(event(EventTypes.ACCOUNT_DEBITED, null));
+
+        assertThat(transaction.getSagaStep()).isEqualTo(SagaStepEnum.INTERBANK_REQUESTED);
+        ArgumentCaptor<InterbankTransferPayload> command = ArgumentCaptor.forClass(InterbankTransferPayload.class);
+        verify(outboxService).enqueue(eq(KafkaTopics.INTERBANK_COMMANDS), eq(REF),
+                eq(EventTypes.INTERBANK_TRANSFER_REQUESTED), command.capture());
+        assertThat(command.getValue().bankCode()).isEqualTo("970436");
+        assertThat(command.getValue().beneficiaryAccount()).isEqualTo("0011001234567");
+        assertThat(command.getValue().amount()).isEqualByComparingTo("500000");
+    }
+
+    @Test
+    void interbankCompletedShouldCompleteTransaction() {
+        interbankOut();
+        transaction.setSagaStep(SagaStepEnum.INTERBANK_REQUESTED);
+
+        sagaService.handle(interbankEvent(EventTypes.INTERBANK_TRANSFER_COMPLETED, null));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.COMPLETED);
+        assertThat(transaction.getExternalRef()).isEqualTo("NP0001");
+        verify(outboxService).enqueue(eq(KafkaTopics.NOTIFICATION_EVENTS), eq(REF),
+                eq(EventTypes.TRANSACTION_COMPLETED), any());
+    }
+
+    @Test
+    void interbankRejectedShouldRefundAmountAndFee() {
+        interbankOut();
+        transaction.setSagaStep(SagaStepEnum.INTERBANK_REQUESTED);
+
+        sagaService.handle(interbankEvent(EventTypes.INTERBANK_TRANSFER_REJECTED, "Tài khoản không tồn tại"));
+
+        assertThat(transaction.getSagaStep()).isEqualTo(SagaStepEnum.COMPENSATION_REQUESTED);
+        assertThat(transaction.getFailureReason()).contains("Tài khoản không tồn tại");
+        ArgumentCaptor<AccountCommandPayload> command = ArgumentCaptor.forClass(AccountCommandPayload.class);
+        verify(outboxService).enqueue(eq(KafkaTopics.ACCOUNT_COMMANDS), eq(REF),
+                eq(EventTypes.ACCOUNT_REFUND_REQUESTED), command.capture());
+        assertThat(command.getValue().accountNumber()).isEqualTo("100000000001");
+        assertThat(command.getValue().fee()).isEqualByComparingTo("3000");
+    }
+
+    @Test
+    void interbankResultInManualReviewShouldStillBeApplied() {
+        interbankOut();
+        transaction.setSagaStep(SagaStepEnum.INTERBANK_REQUESTED);
+        transaction.setStatus(TransactionStatusEnum.MANUAL_REVIEW);
+
+        sagaService.handle(interbankEvent(EventTypes.INTERBANK_TRANSFER_COMPLETED, null));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.COMPLETED);
+    }
+
+    @Test
+    void timeoutOnInterbankStepShouldResendWithoutRefund() {
+        interbankOut();
+        transaction.setSagaStep(SagaStepEnum.INTERBANK_REQUESTED);
+
+        boolean resent = sagaService.resendCurrentCommand(transaction);
+
+        assertThat(resent).isTrue();
+        verify(outboxService).enqueue(eq(KafkaTopics.INTERBANK_COMMANDS), eq(REF),
+                eq(EventTypes.INTERBANK_TRANSFER_REQUESTED), any());
+        verify(outboxService, never()).enqueue(eq(KafkaTopics.ACCOUNT_COMMANDS), any(), any(), any());
+    }
+
+    @Test
+    void lateInterbankSuccessAfterRefundShouldGoToManualReview() {
+        interbankOut();
+        transaction.setStatus(TransactionStatusEnum.COMPENSATED);
+        transaction.setSagaStep(SagaStepEnum.COMPENSATED);
+
+        sagaService.handle(interbankEvent(EventTypes.INTERBANK_TRANSFER_COMPLETED, null));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.MANUAL_REVIEW);
+        assertThat(transaction.getFailureReason()).isEqualTo(TransactionSagaService.LATE_INTERBANK_SUCCESS_REASON);
+    }
+
+    @Test
+    void lateInterbankSuccessBeforeRefundResultShouldKeepManualReviewAfterRefund() {
+        interbankOut();
+        transaction.setSagaStep(SagaStepEnum.COMPENSATION_REQUESTED);
+        sagaService.handle(interbankEvent(EventTypes.INTERBANK_TRANSFER_COMPLETED, null));
+
+        sagaService.handle(event(EventTypes.ACCOUNT_REFUNDED, null));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.MANUAL_REVIEW);
+        assertThat(transaction.getSagaStep()).isEqualTo(SagaStepEnum.COMPENSATED);
+    }
+
+    @Test
+    void creditedInboundShouldCompleteAndReportSettled() {
+        interbankIn();
+
+        sagaService.handle(event(EventTypes.ACCOUNT_CREDITED, null));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.COMPLETED);
+        ArgumentCaptor<InterbankInboundResultPayload> result =
+                ArgumentCaptor.forClass(InterbankInboundResultPayload.class);
+        verify(outboxService).enqueue(eq(KafkaTopics.INTERBANK_COMMANDS), eq(REF),
+                eq(EventTypes.INTERBANK_INBOUND_SETTLED), result.capture());
+        assertThat(result.getValue().napasRef()).isEqualTo("NP0001");
+    }
+
+    @Test
+    void creditFailedInboundShouldFailAndReportReturned() {
+        interbankIn();
+
+        sagaService.handle(event(EventTypes.ACCOUNT_CREDIT_FAILED, "Tài khoản nhận không ở trạng thái hoạt động"));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.FAILED);
+        verify(outboxService).enqueue(eq(KafkaTopics.INTERBANK_COMMANDS), eq(REF),
+                eq(EventTypes.INTERBANK_INBOUND_RETURNED), any());
+        verify(outboxService, never()).enqueue(eq(KafkaTopics.ACCOUNT_COMMANDS), any(), any(), any());
+    }
+
+    @Test
+    void lateCreditOnReturnedInboundShouldGoToManualReview() {
+        interbankIn();
+        transaction.setStatus(TransactionStatusEnum.FAILED);
+
+        sagaService.handle(event(EventTypes.ACCOUNT_CREDITED, null));
+
+        assertThat(transaction.getStatus()).isEqualTo(TransactionStatusEnum.MANUAL_REVIEW);
+        verify(outboxService, never()).enqueue(eq(KafkaTopics.INTERBANK_COMMANDS), any(), any(), any());
+    }
+
+    private void interbankOut() {
+        transaction.setTransactionType(TransactionTypeEnum.INTERBANK_OUT);
+        transaction.setToAccountNumber(null);
+        transaction.setFee(new BigDecimal("3000"));
+        transaction.setCounterpartyBankCode("970436");
+        transaction.setCounterpartyAccount("0011001234567");
+        transaction.setCounterpartyName("TRAN THI B");
+    }
+
+    private void interbankIn() {
+        transaction.setTransactionType(TransactionTypeEnum.INTERBANK_IN);
+        transaction.setFromAccountNumber(null);
+        transaction.setSagaStep(SagaStepEnum.CREDIT_REQUESTED);
+        transaction.setCounterpartyBankCode("970436");
+        transaction.setExternalRef("NP0001");
+    }
+
+    private EventEnvelope interbankEvent(String type, String reason) {
+        return EventEnvelope.of(type, objectMapper.valueToTree(new InterbankResultPayload(REF, "NP0001", reason)));
     }
 
     private EventEnvelope event(String type, String reason) {

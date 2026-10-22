@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521:orcl}
+    username: ${DB_USERNAME:BANK_INTERBANK}
+    password: ${DB_PASSWORD:ChangeMe_Interbank1}
+    hikari:
+      maximum-pool-size: 10
+
+bank:
+  interbank:
+    # BIN Napas của chính ngân hàng: chuyển tới mã này bị từ chối (dùng chuyển khoản nội bộ)
+    own-bank-code: ${INTERBANK_OWN_BANK_CODE:970999}
+    batch-size: 20
+    publish-batch-size: 100
+    dispatch-interval: 2s
+    publish-interval: 1s
+    callback-interval: 5s
+    # Tra soát lệnh chưa rõ kết quả: giãn cách inquiry-interval x số lần (tối đa 10 phút), dừng tự động sau max-attempts
+    inquiry-interval: 30s
+    max-attempts: 20
+    max-callback-attempts: 10
+    gateway:
+      # mock | http (mock = Napas giả lập trong bộ nhớ, chỉ dùng cho dev / test)
+      provider: ${NAPAS_PROVIDER:mock}
+      url: ${NAPAS_GATEWAY_URL:}
+      api-key: ${NAPAS_API_KEY:}
+    webhook:
+      # Khóa HMAC-SHA256 xác thực webhook tiền đến (Base64, tối thiểu 256 bit).
+      # BẮT BUỘC đặt NAPAS_WEBHOOK_SECRET riêng ngoài môi trường dev.
+      secret: ${NAPAS_WEBHOOK_SECRET:YmFuay1zeXN0ZW0tZGV2LW9ubHktbmFwYXMtd2ViaG9vay1zZWNyZXQtY2hhbmdlLW1l}
+      tolerance: 5m

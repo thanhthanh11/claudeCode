@@ -44,6 +44,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/api/auth/login",
             "/api/auth/register",
             "/api/auth/refresh",
+            // Webhook Napas báo tiền đến: xác thực bằng chữ ký HMAC ở interbank-service, không có JWT
+            "/api/interbank/inbound",
             "/actuator/health/**",
             "/actuator/info",
             // Tài liệu API (springdoc) — tắt bằng springdoc.*.enabled=false ngoài môi trường dev

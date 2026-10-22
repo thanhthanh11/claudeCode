@@ -19,7 +19,7 @@ Xác định module bị ảnh hưởng từ các file đã sửa, rồi chạy 
 | Test (kể cả IT) không đóng gói jar | `mvn.cmd -pl <service> -am test-compile surefire:test failsafe:integration-test failsafe:verify -Pintegration-test` |
 | Build toàn bộ | `mvn.cmd clean install -DskipTests` |
 
-- `*Test`: unit Mockito (common-lib, account, transaction, notification), chạy mặc định.
+- `*Test`: unit Mockito (common-lib, account, transaction, notification, interbank), chạy mặc định.
 - `*IT`: Testcontainers Oracle Free 23, chỉ khi bật `-Pintegration-test`; dùng `src/test/resources/application-it.yml` (thay toàn bộ cấu hình, tắt config client), tạo schema bằng script thật trong `database/oracle/`.
 - Jar: customer/account/transaction-service đóng fat jar classifier `exec` (`<module>-1.0.0-SNAPSHOT-exec.jar`; jar chính làm dependency cho `saga-it`); module khác là `<module>-1.0.0-SNAPSHOT.jar`.
 

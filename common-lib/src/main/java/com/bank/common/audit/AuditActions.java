@@ -32,6 +32,7 @@ public final class AuditActions {
     public static final String TRANSACTION_RECONCILIATION_RUN = "TRANSACTION_RECONCILIATION_RUN";
     // notification-service
     public static final String NOTIFICATION_TEMPLATE_UPDATED = "NOTIFICATION_TEMPLATE_UPDATED";
+    public static final String INTERBANK_INQUIRY_TRIGGERED = "INTERBANK_INQUIRY_TRIGGERED";
 
     private AuditActions() {
     }

@@ -7,6 +7,7 @@ import com.bank.account.repository.AccountRepository;
 import com.bank.common.dto.AccountLookupRequest;
 import com.bank.common.dto.LedgerEntryInfo;
 import com.bank.common.dto.LedgerLookupRequest;
+import com.bank.common.dto.PhoneAliasLookupRequest;
 import com.bank.common.exception.BadRequestException;
 import com.bank.common.exception.ForbiddenException;
 import com.bank.common.redis.RedisActions;
@@ -25,20 +26,23 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Xử lý tra cứu tài khoản / sổ cái từ service khác qua Redis (transaction-service, notification-service).
+ * Xử lý tra cứu tài khoản / sổ cái / alias số điện thoại từ service khác qua Redis (transaction-service,
+ * notification-service, interbank-service).
  */
 @Service
 @RequiredArgsConstructor
 public class AccountRedisHandlerService implements RedisRequestHandler {
 
     private final AccountService accountService;
+    private final PhoneAliasService phoneAliasService;
     private final AccountRepository accountRepository;
     private final AccountLedgerEntryRepository ledgerEntryRepository;
     private final ObjectMapper objectMapper;
 
     @Override
     public Set<String> supportedActions() {
-        return Set.of(RedisActions.ACCOUNT_GET_BY_NUMBER, RedisActions.ACCOUNT_LEDGER_BY_REF);
+        return Set.of(RedisActions.ACCOUNT_GET_BY_NUMBER, RedisActions.ACCOUNT_LEDGER_BY_REF,
+                RedisActions.ACCOUNT_RESOLVE_PHONE_ALIAS);
     }
 
     @Override
@@ -56,6 +60,12 @@ public class AccountRedisHandlerService implements RedisRequestHandler {
                 LedgerLookupRequest request = parse(payload, LedgerLookupRequest.class);
                 requireText(request.transactionRef(), "transactionRef");
                 yield ledgerByRef(request.transactionRef());
+            }
+            case RedisActions.ACCOUNT_RESOLVE_PHONE_ALIAS -> {
+                // Người chuyển tiền (đã đăng nhập) hoặc service; kết quả chỉ có tên đã che
+                PhoneAliasLookupRequest request = parse(payload, PhoneAliasLookupRequest.class);
+                requireText(request.phone(), "phone");
+                yield phoneAliasService.resolve(request.phone());
             }
             default -> throw new BadRequestException("UNKNOWN_ACTION", "Action không được hỗ trợ: " + action);
         };

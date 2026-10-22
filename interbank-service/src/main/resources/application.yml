@@ -1,0 +1,8 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: interbank-service
+  config:
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
